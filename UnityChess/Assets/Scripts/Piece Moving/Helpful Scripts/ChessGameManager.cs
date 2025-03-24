@@ -248,131 +248,127 @@ public class ChessGameManager : MonoBehaviour
     }
 
     private void HighlightMoves(List<Vector2Int> moves)
-{
-    List<Vector2Int> validMoves = new List<Vector2Int>();
-    Vector2Int originalPosition = GetPiecePosition(selectedPiece);
-
-    if (IsKingInCheck(isWhiteTurn))
     {
-        Vector2Int kingPos = FindKingPosition(isWhiteTurn);
-        List<Vector2Int> attackPath = GetAttackPathToKing(kingPos, isWhiteTurn);
-        ChessPiece attackingPiece = GetAttackingPiece(kingPos, isWhiteTurn);
-        Vector2Int attackingPos = GetPiecePosition(attackingPiece);
+        List<Vector2Int> validMoves = new List<Vector2Int>();
+        Vector2Int originalPosition = GetPiecePosition(selectedPiece);
 
-        foreach (Vector2Int move in moves)
+        if (IsKingInCheck(isWhiteTurn))
         {
-            if (selectedPiece is King)
+            Vector2Int kingPos = FindKingPosition(isWhiteTurn);
+            List<Vector2Int> attackPath = GetAttackPathToKing(kingPos, isWhiteTurn);
+            ChessPiece attackingPiece = GetAttackingPiece(kingPos, isWhiteTurn);
+            Vector2Int attackingPos = GetPiecePosition(attackingPiece);
+
+            foreach (Vector2Int move in moves)
             {
-                if (IsMoveSafeForKing(selectedPiece, originalPosition, move))
+                if (selectedPiece is King)
                 {
-                    validMoves.Add(move);
+                    if (IsMoveSafeForKing(selectedPiece, originalPosition, move))
+                    {
+                        validMoves.Add(move);
+                    }
                 }
-            }
-            else if (attackPath.Contains(move) || move == attackingPos)
-            {
-                if (IsMoveSafeForKing(selectedPiece, originalPosition, move))
+                else if (attackPath.Contains(move) || move == attackingPos)
                 {
-                    validMoves.Add(move);
+                    if (IsMoveSafeForKing(selectedPiece, originalPosition, move))
+                    {
+                        validMoves.Add(move);
+                    }
                 }
             }
         }
-    }
-    else
-    {
-        Vector2Int kingPos = FindKingPosition(selectedPiece.isWhite);
-        List<Vector2Int> directions = new List<Vector2Int>
+        else
         {
-            new Vector2Int(1, 0), new Vector2Int(-1, 0), new Vector2Int(0, 1), new Vector2Int(0, -1),
-            new Vector2Int(1, 1), new Vector2Int(-1, -1), new Vector2Int(1, -1), new Vector2Int(-1, 1)
-        };
-
-        foreach (Vector2Int direction in directions)
-        {
-
-            bool kingFound = false;
-            Vector2Int currentPos = originalPosition + direction;
-            while (IsInsideBoard(currentPos))
+            Vector2Int kingPos = FindKingPosition(selectedPiece.isWhite);
+            List<Vector2Int> directions = new List<Vector2Int>
             {
-                if (pieces.TryGetValue(currentPos, out GameObject pieceObject))
-                {
-                    ChessPiece piece = pieceObject.GetComponent<ChessPiece>();
-                    if (piece is King && piece.isWhite == selectedPiece.isWhite)
-                    {
-                        kingFound = true;
-                        break;
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
-                currentPos += direction;
-            }
+                new Vector2Int(1, 0), new Vector2Int(-1, 0), new Vector2Int(0, 1), new Vector2Int(0, -1),
+                new Vector2Int(1, 1), new Vector2Int(-1, -1), new Vector2Int(1, -1), new Vector2Int(-1, 1)
+            };
 
-            if (kingFound)
+            foreach (Vector2Int direction in directions)
             {
-                currentPos = originalPosition - direction;
+
+                bool kingFound = false;
+                Vector2Int currentPos = originalPosition + direction;
                 while (IsInsideBoard(currentPos))
                 {
                     if (pieces.TryGetValue(currentPos, out GameObject pieceObject))
                     {
                         ChessPiece piece = pieceObject.GetComponent<ChessPiece>();
-                        if (piece.isWhite != selectedPiece.isWhite && (piece is Rook || piece is Queen || piece is Bishop))
+                        if (piece is King && piece.isWhite == selectedPiece.isWhite)
                         {
-                            foreach (Vector2Int move in moves)
-                            {
-                                if (move == currentPos || move == originalPosition + direction)
-                                {
-                                    validMoves.Add(move);
-                                }
-                            }
-                            break;
+                            kingFound = true;
                         }
-                        else
-                        {
-                            break;
-                        }
+
+                        break;
                     }
-                    currentPos -= direction;
+                    currentPos += direction;
                 }
-            }
-        }
 
-        if (validMoves.Count == 0)
-        {
-            foreach (Vector2Int move in moves)
-            {
-                if (IsMoveSafeForKing(selectedPiece, originalPosition, move) && !IsMovePuttingKingInCheck(selectedPiece, originalPosition, move))
+                if (kingFound)
                 {
-                    validMoves.Add(move);
+                    currentPos = originalPosition - direction;
+                    while (IsInsideBoard(currentPos))
+                    {
+                        if (pieces.TryGetValue(currentPos, out GameObject pieceObject))
+                        {
+                            ChessPiece piece = pieceObject.GetComponent<ChessPiece>();
+                            if (piece.isWhite != selectedPiece.isWhite && (piece is Rook || piece is Queen || piece is Bishop))
+                            {
+                                foreach (Vector2Int move in moves)
+                                {
+                                    if (move == currentPos || move == originalPosition + direction)
+                                    {
+                                        validMoves.Add(move);
+                                    }
+                                }
+                                break;
+                            }
+                            else
+                            {
+                                break;
+                            }
+                        }
+                        currentPos -= direction;
+                    }
+                }
+            }
+
+            if (validMoves.Count == 0)
+            {
+                foreach (Vector2Int move in moves)
+                {
+                    if (IsMoveSafeForKing(selectedPiece, originalPosition, move) && !IsMovePuttingKingInCheck(selectedPiece, originalPosition, move))
+                    {
+                        validMoves.Add(move);
+                    }
+                }
+            }
+        }
+
+        foreach (Vector2Int move in validMoves)
+        {
+            foreach (var tile in tiles.Values)
+            {
+                ChessTile tileScript = tile.GetComponent<ChessTile>();
+                if (tileScript.tilePos == move)
+                {
+                    var rendererMesh = tile.GetComponentInChildren<MeshRenderer>();
+                    if (rendererMesh != null)
+                        rendererMesh.material = highlightMaterial;
                 }
             }
         }
     }
-
-    foreach (Vector2Int move in validMoves)
-    {
-        foreach (var tile in tiles.Values)
-        {
-            ChessTile tileScript = tile.GetComponent<ChessTile>();
-            if (tileScript.tilePos == move)
-            {
-                var rendererMesh = tile.GetComponentInChildren<MeshRenderer>();
-                if (rendererMesh != null)
-                    rendererMesh.material = highlightMaterial;
-            }
-        }
-    }
-}
 
     private bool IsMovePuttingKingInCheck(ChessPiece piece, Vector2Int from, Vector2Int to)
     {
         Vector2Int kingPos = FindKingPosition(piece.isWhite);
         Vector2Int directionToKing = kingPos - from;
 
-        if (piece is Pawn) 
+        if (piece is Pawn)
         {
-            // Check if the pawn's move puts the king in check
             if (directionToKing.x == 0 && directionToKing.y != 0)
             {
                 Vector2Int directionFromPiece = new Vector2Int(
@@ -416,11 +412,11 @@ public class ChessGameManager : MonoBehaviour
                     ChessPiece blockingPiece = pieceObject.GetComponent<ChessPiece>();
                     if (blockingPiece.isWhite != piece.isWhite)
                     {
-                        if ((directionToKing.x == 0 || directionToKing.y == 0) && (blockingPiece is Rook || blockingPiece is Queen))
+                        if ((directionToKing.x == 0 || directionToKing.y == 0) && (blockingPiece is Rook or Queen))
                         {
                             return true;
                         }
-                        if (Mathf.Abs(directionToKing.x) == Mathf.Abs(directionToKing.y) && (blockingPiece is Bishop || blockingPiece is Queen))
+                        if (Mathf.Abs(directionToKing.x) == Mathf.Abs(directionToKing.y) && (blockingPiece is Bishop or Queen))
                         {
                             return true;
                         }
@@ -697,7 +693,6 @@ public class ChessGameManager : MonoBehaviour
 
     public bool IsTileAttacked(Vector2Int currentPos, bool isWhite)
     {
-        Debug.Log($"Checking if tile {currentPos} is attacked for {(isWhite ? "white" : "black")}");
         foreach (var piece in pieces.Values)
         {
             ChessPiece chessPiece = piece.GetComponent<ChessPiece>();
@@ -726,8 +721,7 @@ public class ChessGameManager : MonoBehaviour
             };
             foreach (Vector2Int offset in offsets)
             {
-                if (piecePos + offset == targetPos)
-                    return true;
+                return true;
             }
         }
         else if (piece is Pawn)
@@ -745,22 +739,49 @@ public class ChessGameManager : MonoBehaviour
         }
         return false;
     }
-    
+
     private bool IsMoveSafeForKing(ChessPiece piece, Vector2Int from, Vector2Int to)
     {
         Vector2Int kingPos = piece is King ? to : FindKingPosition(piece.isWhite);
         Vector2Int directionToKing = kingPos - from;
+        Vector2Int directionOfMove = to - from;
+        Vector2Int directionOfMoveNormalized = new Vector2Int(
+            directionOfMove.x == 0 ? 0 : directionOfMove.x / Mathf.Abs(directionOfMove.x),
+            directionOfMove.y == 0 ? 0 : directionOfMove.y / Mathf.Abs(directionOfMove.y)
+        );
 
         if (piece is King)
         {
             return !IsTileAttacked(to, piece.isWhite);
         }
 
-        if (directionToKing.x == 0 || directionToKing.y == 0 || Mathf.Abs(directionToKing.x) == Mathf.Abs(directionToKing.y))
+        if (directionToKing.x == 0 || directionToKing.y == 0 ||
+            Mathf.Abs(directionToKing.x) == Mathf.Abs(directionToKing.y))
         {
-            Vector2Int directionFromPiece = -directionToKing;
-            Vector2Int currentPos = from + directionFromPiece;
+            Vector2Int directionFromPiece = new Vector2Int(
+                directionToKing.x == 0 ? 0 : directionToKing.x / Mathf.Abs(directionToKing.x),
+                directionToKing.y == 0 ? 0 : directionToKing.y / Mathf.Abs(directionToKing.y)
+            );
 
+            Vector2Int currentPos = from + directionFromPiece;
+            while (IsInsideBoard(currentPos))
+            {
+                if (pieces.TryGetValue(currentPos, out GameObject pieceObject))
+                {
+                    if (pieceObject != null)
+                    {
+                        ChessPiece blockingPiece = pieceObject.GetComponent<ChessPiece>();
+                        if (blockingPiece is not King)
+                            return true;
+                    }
+                }
+
+                currentPos += directionFromPiece;
+            }
+
+            directionFromPiece *= -1;
+            currentPos = from + directionFromPiece;
+            
             while (IsInsideBoard(currentPos))
             {
                 if (pieces.TryGetValue(currentPos, out GameObject pieceObject))
@@ -768,69 +789,73 @@ public class ChessGameManager : MonoBehaviour
                     ChessPiece blockingPiece = pieceObject.GetComponent<ChessPiece>();
                     if (blockingPiece.isWhite != piece.isWhite)
                     {
-                        if ((directionToKing.x == 0 || directionToKing.y == 0) && (blockingPiece is Rook || blockingPiece is Queen))
-                        {
-                            return false;
-                        }
-                        if (Mathf.Abs(directionToKing.x) == Mathf.Abs(directionToKing.y) && (blockingPiece is Bishop || blockingPiece is Queen))
-                        {
-                            return false;
-                        }
+                        if ((directionToKing.x == 0 || directionToKing.y == 0) &&
+                            (blockingPiece is Rook || blockingPiece is Queen))
+                            return directionOfMoveNormalized == directionFromPiece;
+
+                        if (Mathf.Abs(directionToKing.x) == Mathf.Abs(directionToKing.y) &&
+                            (blockingPiece is Bishop || blockingPiece is Queen))
+                            return directionOfMoveNormalized == directionFromPiece;
                     }
-                    break;
+                    else if (blockingPiece.isWhite == piece.isWhite)
+                        return true;
                 }
+
                 currentPos += directionFromPiece;
             }
+
+            return true;
         }
+
         return true;
     }
 
     private bool IsInsideBoard(Vector2Int currentPos)
-    {
-        return currentPos.x >= 0 && currentPos.x < 8 && currentPos.y >= 0 && currentPos.y < 8;
-    }
-    
-    private List<Vector2Int> GetAttackPathToKing(Vector2Int kingPos, bool isWhite)
-    {
-        List<Vector2Int> path = new List<Vector2Int>();
-        ChessPiece attackingPiece = GetAttackingPiece(kingPos, isWhite);
-        if (attackingPiece == null || attackingPiece is Knight)
         {
+            return currentPos.x >= 0 && currentPos.x < 8 && currentPos.y >= 0 && currentPos.y < 8;
+        }
+    
+        private List<Vector2Int> GetAttackPathToKing(Vector2Int kingPos, bool isWhite)
+        {
+            List<Vector2Int> path = new List<Vector2Int>();
+            ChessPiece attackingPiece = GetAttackingPiece(kingPos, isWhite);
+            if (attackingPiece == null || attackingPiece is Knight)
+            {
+                return path;
+            }
+
+            Vector2Int attackingPos = GetPiecePosition(attackingPiece);
+            Vector2Int direction = new Vector2Int(
+                Mathf.Clamp(kingPos.x - attackingPos.x, -1, 1),
+                Mathf.Clamp(kingPos.y - attackingPos.y, -1, 1)
+            );
+
+            Vector2Int currentPos = attackingPos + direction;
+            while (currentPos != kingPos)
+            {
+                path.Add(currentPos);
+                currentPos += direction;
+            }
+
             return path;
         }
-
-        Vector2Int attackingPos = GetPiecePosition(attackingPiece);
-        Vector2Int direction = new Vector2Int(
-            Mathf.Clamp(kingPos.x - attackingPos.x, -1, 1),
-            Mathf.Clamp(kingPos.y - attackingPos.y, -1, 1)
-        );
-
-        Vector2Int currentPos = attackingPos + direction;
-        while (currentPos != kingPos)
-        {
-            path.Add(currentPos);
-            currentPos += direction;
-        }
-
-        return path;
-    }
     
-    private ChessPiece GetAttackingPiece(Vector2Int kingPos, bool isWhite)
-    {
-        foreach (var piece in pieces.Values)
+        private ChessPiece GetAttackingPiece(Vector2Int kingPos, bool isWhite)
         {
-            ChessPiece chessPiece = piece.GetComponent<ChessPiece>();
-            if (chessPiece != null && chessPiece.isWhite != isWhite)
+            foreach (var piece in pieces.Values)
             {
-                Vector2Int currentPos = GetPiecePosition(chessPiece);
-                List<Vector2Int> validMoves = chessPiece.GetValidMoves(currentPos);
-
-                if (validMoves.Contains(kingPos))
+                ChessPiece chessPiece = piece.GetComponent<ChessPiece>();
+                if (chessPiece != null && chessPiece.isWhite != isWhite)
                 {
-                    return chessPiece;
+                    Vector2Int currentPos = GetPiecePosition(chessPiece);
+                    List<Vector2Int> validMoves = chessPiece.GetValidMoves(currentPos);
+
+                    if (validMoves.Contains(kingPos))
+                    {
+                        return chessPiece;
+                    }
                 }
             }
+            return null;
         }
-        return null;
-    }
 }
