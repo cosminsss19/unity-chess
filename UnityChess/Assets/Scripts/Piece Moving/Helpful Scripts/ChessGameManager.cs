@@ -339,7 +339,7 @@ public class ChessGameManager : MonoBehaviour
             {
                 foreach (Vector2Int move in moves)
                 {
-                    if (IsMoveSafeForKing(selectedPiece, originalPosition, move) && !IsMovePuttingKingInCheck(selectedPiece, originalPosition, move))
+                    if (IsMoveSafeForKing(selectedPiece, originalPosition, move))
                     {
                         validMoves.Add(move);
                     }
@@ -360,73 +360,6 @@ public class ChessGameManager : MonoBehaviour
                 }
             }
         }
-    }
-
-    private bool IsMovePuttingKingInCheck(ChessPiece piece, Vector2Int from, Vector2Int to)
-    {
-        Vector2Int kingPos = FindKingPosition(piece.isWhite);
-        Vector2Int directionToKing = kingPos - from;
-
-        if (piece is Pawn)
-        {
-            if (directionToKing.x == 0 && directionToKing.y != 0)
-            {
-                Vector2Int directionFromPiece = new Vector2Int(
-                    directionToKing.x == 0 ? 0 : directionToKing.x / Mathf.Abs(directionToKing.x),
-                    directionToKing.y == 0 ? 0 : directionToKing.y / Mathf.Abs(directionToKing.y)
-                );
-                directionFromPiece *= -1;
-                Vector2Int currentPos = from + directionFromPiece;
-
-                while (IsInsideBoard(currentPos))
-                {
-                    if (pieces.TryGetValue(currentPos, out GameObject pieceObject))
-                    {
-                        ChessPiece blockingPiece = pieceObject.GetComponent<ChessPiece>();
-                        if (blockingPiece.isWhite != piece.isWhite)
-                        {
-                            if (blockingPiece is Rook || blockingPiece is Queen)
-                            {
-                                return true;
-                            }
-                        }
-                        break;
-                    }
-                    currentPos += directionFromPiece;
-                }
-            }
-        }
-        else if (directionToKing.x == 0 || directionToKing.y == 0 || Mathf.Abs(directionToKing.x) == Mathf.Abs(directionToKing.y))
-        {
-            Vector2Int directionFromPiece = new Vector2Int(
-                directionToKing.x == 0 ? 0 : directionToKing.x / Mathf.Abs(directionToKing.x),
-                directionToKing.y == 0 ? 0 : directionToKing.y / Mathf.Abs(directionToKing.y)
-            );
-            directionFromPiece *= -1;
-            Vector2Int currentPos = from + directionFromPiece;
-
-            while (IsInsideBoard(currentPos))
-            {
-                if (pieces.TryGetValue(currentPos, out GameObject pieceObject))
-                {
-                    ChessPiece blockingPiece = pieceObject.GetComponent<ChessPiece>();
-                    if (blockingPiece.isWhite != piece.isWhite)
-                    {
-                        if ((directionToKing.x == 0 || directionToKing.y == 0) && (blockingPiece is Rook or Queen))
-                        {
-                            return true;
-                        }
-                        if (Mathf.Abs(directionToKing.x) == Mathf.Abs(directionToKing.y) && (blockingPiece is Bishop or Queen))
-                        {
-                            return true;
-                        }
-                    }
-                    break;
-                }
-                currentPos += directionFromPiece;
-            }
-        }
-        return false;
     }
 
     private void ClearHighlights()
