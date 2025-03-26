@@ -24,7 +24,6 @@ public class ChessGameManager : MonoBehaviour
 
     public ChessPiece selectedPiece;
     public bool isWhiteTurn = true;
-    public Vector2Int? EnPassantMove;
 
     public Material defaultBlackMaterial;
     public Material defaultWhiteMaterial;
@@ -138,6 +137,16 @@ public class ChessGameManager : MonoBehaviour
 
     private void MovePiece(ChessPiece piece, Vector2Int targetPos)
     {
+        foreach (var item in pieces.Values)
+        {
+            ChessPiece chessPiece = item.GetComponent<ChessPiece>();
+            if (chessPiece != null && chessPiece is Pawn)
+            {
+                var pawnScript = chessPiece as Pawn;
+                pawnScript.enPassantable = false;
+            }
+        }
+        
         Vector2Int oldPos = GetPiecePosition(piece);
         if (oldPos == new Vector2Int(-1, -1))
         {
@@ -167,10 +176,21 @@ public class ChessGameManager : MonoBehaviour
             }
         }
 
-        // Capture the target piece if it exists
-        if (pieces.TryGetValue(targetPos, out var targetPiece))
+        // Handle En Passant capture
+        if (piece is Pawn && Mathf.Abs(targetPos.y - oldPos.y) == 1 && pieces.TryGetValue(targetPos, out var targetPiece) == false)
         {
-            Destroy(targetPiece);
+            Vector2Int enPassantPos = new Vector2Int(oldPos.x, targetPos.y);
+            if (pieces.TryGetValue(enPassantPos, out var enPassantPiece) && enPassantPiece.GetComponent<Pawn>().enPassantable)
+            {
+                Destroy(enPassantPiece);
+                pieces.Remove(enPassantPos);
+            }
+        }
+
+        // Capture the target piece if it exists
+        if (pieces.TryGetValue(targetPos, out var targetPiece1))
+        {
+            Destroy(targetPiece1);
             pieces.Remove(targetPos);
         }
 
@@ -179,13 +199,15 @@ public class ChessGameManager : MonoBehaviour
         piece.Move(targetPos);
 
         // Set En Passant target square
-        if (piece is Pawn && Mathf.Abs(targetPos.x - oldPos.x) == 2)
+        if (piece is Pawn)
         {
-            EnPassantMove = new Vector2Int((oldPos.x + targetPos.x) / 2, oldPos.y);
-        }
-        else
-        {
-            EnPassantMove = null;
+            var pieceScript = piece as Pawn;
+            if (Mathf.Abs(targetPos.x - oldPos.x) == 2)
+                pieceScript.enPassantable = true;
+            else
+            {
+                pieceScript.enPassantable = false;
+            }
         }
     }
 
@@ -565,11 +587,11 @@ public class ChessGameManager : MonoBehaviour
         // Restore En Passant state
         if (piece is Pawn && Mathf.Abs(to.x - from.x) == 2)
         {
-            EnPassantMove = new Vector2Int((from.x + to.x) / 2, from.y);
+            //EnPassantMove = new Vector2Int((from.x + to.x) / 2, from.y);
         }
         else
         {
-            EnPassantMove = null;
+            //EnPassantMove = null;
         }
     }
     private bool IsStalemate(bool isWhite)
@@ -654,7 +676,8 @@ public class ChessGameManager : MonoBehaviour
             };
             foreach (Vector2Int offset in offsets)
             {
-                return true;
+                if (piecePos + offset == targetPos)
+                    return true;
             }
         }
         else if (piece is Pawn)
@@ -729,6 +752,7 @@ public class ChessGameManager : MonoBehaviour
                         if (Mathf.Abs(directionToKing.x) == Mathf.Abs(directionToKing.y) &&
                             (blockingPiece is Bishop || blockingPiece is Queen))
                             return directionOfMoveNormalized == directionFromPiece;
+                        return true;
                     }
                     else if (blockingPiece.isWhite == piece.isWhite)
                         return true;
@@ -744,51 +768,51 @@ public class ChessGameManager : MonoBehaviour
     }
 
     private bool IsInsideBoard(Vector2Int currentPos)
-        {
-            return currentPos.x >= 0 && currentPos.x < 8 && currentPos.y >= 0 && currentPos.y < 8;
-        }
+    {
+        return currentPos.x >= 0 && currentPos.x < 8 && currentPos.y >= 0 && currentPos.y < 8;
+    }
     
-        private List<Vector2Int> GetAttackPathToKing(Vector2Int kingPos, bool isWhite)
+    private List<Vector2Int> GetAttackPathToKing(Vector2Int kingPos, bool isWhite)
+    {
+        List<Vector2Int> path = new List<Vector2Int>();
+        ChessPiece attackingPiece = GetAttackingPiece(kingPos, isWhite);
+        if (attackingPiece == null || attackingPiece is Knight)
         {
-            List<Vector2Int> path = new List<Vector2Int>();
-            ChessPiece attackingPiece = GetAttackingPiece(kingPos, isWhite);
-            if (attackingPiece == null || attackingPiece is Knight)
-            {
-                return path;
-            }
-
-            Vector2Int attackingPos = GetPiecePosition(attackingPiece);
-            Vector2Int direction = new Vector2Int(
-                Mathf.Clamp(kingPos.x - attackingPos.x, -1, 1),
-                Mathf.Clamp(kingPos.y - attackingPos.y, -1, 1)
-            );
-
-            Vector2Int currentPos = attackingPos + direction;
-            while (currentPos != kingPos)
-            {
-                path.Add(currentPos);
-                currentPos += direction;
-            }
-
             return path;
         }
-    
-        private ChessPiece GetAttackingPiece(Vector2Int kingPos, bool isWhite)
-        {
-            foreach (var piece in pieces.Values)
-            {
-                ChessPiece chessPiece = piece.GetComponent<ChessPiece>();
-                if (chessPiece != null && chessPiece.isWhite != isWhite)
-                {
-                    Vector2Int currentPos = GetPiecePosition(chessPiece);
-                    List<Vector2Int> validMoves = chessPiece.GetValidMoves(currentPos);
 
-                    if (validMoves.Contains(kingPos))
-                    {
-                        return chessPiece;
-                    }
+        Vector2Int attackingPos = GetPiecePosition(attackingPiece);
+        Vector2Int direction = new Vector2Int(
+            Mathf.Clamp(kingPos.x - attackingPos.x, -1, 1),
+            Mathf.Clamp(kingPos.y - attackingPos.y, -1, 1)
+        );
+
+        Vector2Int currentPos = attackingPos + direction;
+        while (currentPos != kingPos)
+        {
+            path.Add(currentPos);
+            currentPos += direction;
+        }
+
+        return path;
+    }
+    
+    private ChessPiece GetAttackingPiece(Vector2Int kingPos, bool isWhite)
+    {
+        foreach (var piece in pieces.Values)
+        {
+            ChessPiece chessPiece = piece.GetComponent<ChessPiece>();
+            if (chessPiece != null && chessPiece.isWhite != isWhite)
+            {
+                Vector2Int currentPos = GetPiecePosition(chessPiece);
+                List<Vector2Int> validMoves = chessPiece.GetValidMoves(currentPos);
+
+                if (validMoves.Contains(kingPos))
+                {
+                    return chessPiece;
                 }
             }
-            return null;
         }
+        return null;
+    }
 }
