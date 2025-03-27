@@ -9,8 +9,11 @@ public class Pawn : ChessPiece
     {
         List<Vector2Int> moves = new List<Vector2Int>();
         Vector2Int forward = isWhite ? Vector2Int.right : Vector2Int.left;
+        Vector2Int right = isWhite ? Vector2Int.down : Vector2Int.up;
+        Vector2Int left = isWhite ? Vector2Int.up : Vector2Int.down;
         Vector2Int forwardLeft = isWhite ? forward + Vector2Int.up : forward + Vector2Int.down;
         Vector2Int forwardRight = isWhite ? forward + Vector2Int.down : forward + Vector2Int.up;
+        
 
         // Move forward
         Vector2Int pos = currentPos + forward;
@@ -34,20 +37,20 @@ public class Pawn : ChessPiece
 
         // En Passant
 
-        var testPiece = gameManager.GetPieceAtPosition(currentPos + Vector2Int.up);
+        var testPiece = gameManager.GetPieceAtPosition(currentPos + left);
         if (testPiece is Pawn && testPiece.isWhite != isWhite)
         {
             var pieceScript = testPiece as Pawn;
-            if (pieceScript.enPassantable && IsInsideBoard(forward+Vector2Int.up))
-                moves.Add(forward+Vector2Int.up);
+            if (pieceScript.enPassantable && IsInsideBoard(currentPos+forwardLeft))
+                moves.Add(currentPos+forwardLeft);
         }
         
-        var testPiece2 = gameManager.GetPieceAtPosition(currentPos + Vector2Int.down);
+        var testPiece2 = gameManager.GetPieceAtPosition(currentPos + right);
         if (testPiece2 is Pawn && testPiece2.isWhite != isWhite)
         {
             var pieceScript = testPiece2 as Pawn;
-            if (pieceScript.enPassantable && IsInsideBoard(forward+Vector2Int.down))
-                moves.Add(forward+Vector2Int.down);
+            if (pieceScript.enPassantable && IsInsideBoard(currentPos+forwardRight))
+                moves.Add(currentPos+forwardRight);
         }
 
         return moves;

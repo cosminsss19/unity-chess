@@ -140,7 +140,7 @@ public class ChessGameManager : MonoBehaviour
         foreach (var item in pieces.Values)
         {
             ChessPiece chessPiece = item.GetComponent<ChessPiece>();
-            if (chessPiece != null && chessPiece is Pawn)
+            if (chessPiece != null && chessPiece is Pawn && chessPiece.isWhite == isWhiteTurn)
             {
                 var pawnScript = chessPiece as Pawn;
                 pawnScript.enPassantable = false;
