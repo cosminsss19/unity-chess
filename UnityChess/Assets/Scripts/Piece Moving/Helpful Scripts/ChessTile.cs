@@ -7,18 +7,18 @@ namespace Piece_Moving.Helpful_Scripts
         public string tileName;
         public Vector2Int tilePos;
 
-        private ChessGameManager gameManager;
+        private ChessGameManager _gameManager;
 
         public void Initialize(string nameTile, Vector2Int position, ChessGameManager manager)
         {
             tileName = nameTile;
             tilePos = position;
-            gameManager = manager;
+            _gameManager = manager;
         }
 
         private void OnMouseDown()
         {
-            gameManager.OnTileClicked(tilePos);
+            _gameManager.OnTileClicked(tilePos);
         }
     }
 }

@@ -7,7 +7,7 @@ public class Bishop : ChessPiece
 {
     public override List<Vector2Int> GetValidMoves(Vector2Int currentPos)
     {
-        return GetLineMoves(currentPos, new Vector2Int[] {
+        return GetLineMoves(currentPos, new[] {
             Constants.forwardLeft,
             Constants.forwardRight,
             Constants.backLeft,

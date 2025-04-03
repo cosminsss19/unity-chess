@@ -4,7 +4,7 @@ using UnityEngine;
 
 public class Pawn : ChessPiece
 {
-    public bool enPassantable { get; set; }
+    public bool EnPassantable { get; set; }
     public override List<Vector2Int> GetValidMoves(Vector2Int currentPos)
     {
         List<Vector2Int> moves = new List<Vector2Int>();
@@ -41,7 +41,7 @@ public class Pawn : ChessPiece
         if (testPiece is Pawn && testPiece.isWhite != isWhite)
         {
             var pieceScript = testPiece as Pawn;
-            if (pieceScript.enPassantable && IsInsideBoard(currentPos+forwardLeft))
+            if (pieceScript.EnPassantable && IsInsideBoard(currentPos+forwardLeft))
                 moves.Add(currentPos+forwardLeft);
         }
         
@@ -49,7 +49,7 @@ public class Pawn : ChessPiece
         if (testPiece2 is Pawn && testPiece2.isWhite != isWhite)
         {
             var pieceScript = testPiece2 as Pawn;
-            if (pieceScript.enPassantable && IsInsideBoard(currentPos+forwardRight))
+            if (pieceScript.EnPassantable && IsInsideBoard(currentPos+forwardRight))
                 moves.Add(currentPos+forwardRight);
         }
 

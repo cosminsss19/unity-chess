@@ -40,7 +40,7 @@ namespace Piece_Moving.Helpful_Scripts
 
         protected bool IsInsideBoard(Vector2Int position)
         {
-            return position.x >= 0 && position.x < 8 && position.y >= 0 && position.y < 8;
+            return position.x is >= 0 and < 8 && position.y is >= 0 and < 8;
         }
     }
 }

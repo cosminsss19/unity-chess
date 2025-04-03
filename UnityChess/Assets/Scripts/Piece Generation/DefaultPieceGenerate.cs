@@ -21,7 +21,7 @@ public class ChessPieceSpawner : MonoBehaviour
     [Header("Chessboard Parent Object")]
     public GameObject board;
 
-    private Transform[,] boardSquares = new Transform[8, 8];
+    private Transform[,] _boardSquares = new Transform[8, 8];
 
     private void Start()
     {
@@ -43,7 +43,7 @@ public class ChessPieceSpawner : MonoBehaviour
         {
             for (int col = 0; col < 8; col++)
             {
-                boardSquares[row, col] = squares[index];
+                _boardSquares[row, col] = squares[index];
                 index++;
             }
         }
@@ -86,7 +86,7 @@ public class ChessPieceSpawner : MonoBehaviour
 
     private void InstantiateAndInitialize(GameObject prefab, int row, int col, bool isWhite, ChessGameManager gameManager)
     {
-        GameObject piece = Instantiate(prefab, GetPiecePosition(row, col), Quaternion.identity, boardSquares[row, col]);
+        GameObject piece = Instantiate(prefab, GetPiecePosition(row, col), Quaternion.identity, _boardSquares[row, col]);
         ChessPiece chessPiece = piece.GetComponent<ChessPiece>();
         if (chessPiece != null)
         {
@@ -97,7 +97,7 @@ public class ChessPieceSpawner : MonoBehaviour
 
     private Vector3 GetPiecePosition(int row, int col)
     {
-        Vector3 position = boardSquares[row, col].position;
+        Vector3 position = _boardSquares[row, col].position;
         position += Constants.offset;
         return position;
     }
