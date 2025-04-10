@@ -218,6 +218,7 @@ GameObject:
   - component: {fileID: 344531677}
   - component: {fileID: 344531676}
   - component: {fileID: 344531675}
+  - component: {fileID: 344531679}
   m_Layer: 5
   m_Name: Canvas
   m_TagString: Untagged
@@ -308,6 +309,23 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0, y: 0}
+--- !u!114 &344531679
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 344531674}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: dc42784cf147c0c48a680349fa168899, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  m_IgnoreReversedGraphics: 1
+  m_BlockingObjects: 0
+  m_BlockingMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
 --- !u!1 &624065911 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 2434296415605438566, guid: 9abe5113b8aa5c443bdb26d1f8cbbb87, type: 3}
@@ -739,7 +757,7 @@ Transform:
   m_GameObject: {fileID: 1870361105}
   serializedVersion: 2
   m_LocalRotation: {x: 0.5735764, y: 0, z: 0, w: 0.8191521}
-  m_LocalPosition: {x: 0, y: 17, z: -8}
+  m_LocalPosition: {x: 0.15, y: 10.39, z: -4.83}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
