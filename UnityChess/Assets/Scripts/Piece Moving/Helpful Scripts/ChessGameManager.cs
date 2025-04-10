@@ -2,8 +2,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using DefaultNamespace;
 using Piece_Moving.Helpful_Scripts;
 using UnityEngine;
+using UnityEngine.UI;
 
 public class PieceDetails
 {
@@ -32,10 +34,35 @@ public class ChessGameManager : MonoBehaviour
     public Material defaultBlackMaterial;
     public Material defaultWhiteMaterial;
     public Material highlightMaterial;
+    
+    [Header("Promotion UI")]
+    public GameObject promotionPanel;
+    public Transform promotionPiecesContainer;
+    public GameObject whitePromotionPrefab; // Parent object containing prefabs
+    public GameObject blackPromotionPrefab; // Parent object containing prefabs
+    private Vector2Int _promotionPosition;
+    private bool _isWaitingForPromotion = false;
+    
+    [Header("Promotion Piece Prefabs")]
+    public GameObject whiteQueen;
+    public GameObject blackQueen;
+    public GameObject whiteRook;
+    public GameObject blackRook;
+    public GameObject whiteBishop;
+    public GameObject blackBishop;
+    public GameObject whiteKnight;
+    public GameObject blackKnight;
 
     private void Start()
     {
         StartFunction();
+        if (promotionPanel != null)
+            promotionPanel.SetActive(false);
+        RectTransform promotionPanelRect = promotionPanel.GetComponent<RectTransform>();
+        promotionPanelRect.anchorMin = new Vector2(0.5f, 0.5f);
+        promotionPanelRect.anchorMax = new Vector2(0.5f, 0.5f);
+        promotionPanelRect.pivot = new Vector2(0.5f, 0.5f);
+        promotionPanelRect.anchoredPosition = Vector2.zero;
     }
     private async Task StartFunction()
     {
@@ -100,10 +127,9 @@ public class ChessGameManager : MonoBehaviour
 
     public void OnTileClicked(Vector2Int tilePos)
     {
-        // Send a Debug Log with the name of the tile clicked
         string tileName = _tiles.FirstOrDefault(t => t.Value.GetComponent<ChessTile>().tilePos == tilePos).Key;
         Debug.Log("Tile clicked: " + tileName);
-
+    
         if (selectedPiece == null)
         {
             if (_pieces.TryGetValue(tilePos, out GameObject pieceObject))
@@ -127,7 +153,7 @@ public class ChessGameManager : MonoBehaviour
                     if (selectedPiece.IsValidMove(tilePos))
                     {
                         MovePiece(selectedPiece, tilePos);
-                        EndTurn();
+                        // Remove the EndTurn() call here - it's already called in MovePiece
                     }
                 }
                 else
@@ -138,11 +164,214 @@ public class ChessGameManager : MonoBehaviour
             }
         }
     }
+    
+    private void SetBoardInteraction(bool enabled)
+    {
+        // Disable/enable all chess piece colliders
+        foreach (var piece in _pieces.Values)
+        {
+            if (piece != null)
+            {
+                Collider[] colliders = piece.GetComponentsInChildren<Collider>();
+                foreach (Collider col in colliders)
+                {
+                    col.enabled = enabled;
+                }
+            }
+        }
+
+        // Disable/enable all tile colliders
+        foreach (var tile in _tiles.Values)
+        {
+            if (tile != null)
+            {
+                Collider[] colliders = tile.GetComponentsInChildren<Collider>();
+                foreach (Collider col in colliders)
+                {
+                    col.enabled = enabled;
+                }
+            }
+        }
+    }
+    
+    private void ShowPromotionUI(bool isWhite)
+{
+    Debug.Log("ShowPromotionUI called for " + (isWhite ? "white" : "black"));
+
+    SetBoardInteraction(false);
+    // Clear existing promotion panel contents
+    foreach (Transform child in promotionPanel.transform)
+    {
+        Destroy(child.gameObject);
+    }
+
+    // Make sure promotion panel covers the entire screen
+    RectTransform promotionPanelRect = promotionPanel.GetComponent<RectTransform>();
+    promotionPanelRect.anchorMin = Vector2.zero;
+    promotionPanelRect.anchorMax = Vector2.one;
+    promotionPanelRect.offsetMin = Vector2.zero;
+    promotionPanelRect.offsetMax = Vector2.zero;
+
+    // Add a canvas group to the panel to control input blocking
+    CanvasGroup panelCanvasGroup = promotionPanel.GetComponent<CanvasGroup>();
+    if (panelCanvasGroup == null)
+        panelCanvasGroup = promotionPanel.AddComponent<CanvasGroup>();
+    
+    panelCanvasGroup.blocksRaycasts = true;
+    panelCanvasGroup.interactable = true;
+    panelCanvasGroup.ignoreParentGroups = true;
+
+    // Create overlay with input blocker
+    GameObject overlay = new GameObject("DarkeningOverlay");
+    overlay.transform.SetParent(promotionPanel.transform, false);
+    
+    // Add image component for visual effect
+    Image overlayImage = overlay.AddComponent<Image>();
+    overlayImage.color = new Color(0, 0, 0, 0.75f);
+    overlayImage.raycastTarget = true;
+    
+    // Force the overlay to be full screen
+    RectTransform overlayRect = overlay.GetComponent<RectTransform>();
+    overlayRect.anchorMin = Vector2.zero;
+    overlayRect.anchorMax = Vector2.one;
+    overlayRect.offsetMin = Vector2.zero;
+    overlayRect.offsetMax = Vector2.zero;
+    overlayRect.SetAsFirstSibling();
+
+    // Create dedicated input blocker that sits behind buttons but over the overlay
+    GameObject inputBlocker = new GameObject("InputBlocker");
+    inputBlocker.transform.SetParent(promotionPanel.transform, false);
+    
+    // Add transparent image as the raycast target
+    Image blockerImage = inputBlocker.AddComponent<Image>();
+    blockerImage.color = new Color(0, 0, 0, 0.01f); // Nearly invisible
+    blockerImage.raycastTarget = true;
+    
+    RectTransform blockerRect = inputBlocker.GetComponent<RectTransform>();
+    blockerRect.anchorMin = Vector2.zero;
+    blockerRect.anchorMax = Vector2.one;
+    blockerRect.offsetMin = Vector2.zero;
+    blockerRect.offsetMax = Vector2.zero;
+
+    // Create button panel on top
+    GameObject buttonPanel = new GameObject("ButtonPanel");
+    buttonPanel.transform.SetParent(promotionPanel.transform, false);
+    buttonPanel.AddComponent<CanvasGroup>().blocksRaycasts = true;
+    
+    Image buttonPanelImage = buttonPanel.AddComponent<Image>();
+    buttonPanelImage.color = new Color(0.2f, 0.2f, 0.2f, 0.9f);
+    
+    RectTransform buttonPanelRect = buttonPanel.GetComponent<RectTransform>();
+    buttonPanelRect.anchorMin = new Vector2(0.5f, 0.5f);
+    buttonPanelRect.anchorMax = new Vector2(0.5f, 0.5f);
+    buttonPanelRect.pivot = new Vector2(0.5f, 0.5f);
+    buttonPanelRect.sizeDelta = new Vector2(400, 120);
+    
+    // Add layout group
+    HorizontalLayoutGroup layout = buttonPanel.AddComponent<HorizontalLayoutGroup>();
+    layout.spacing = 10;
+    layout.childAlignment = TextAnchor.MiddleCenter;
+    layout.padding = new RectOffset(20, 20, 20, 20);
+    layout.childControlWidth = false;
+    layout.childControlHeight = false;
+    
+    // Create promotion buttons
+    string spritePath = isWhite ? "WhitePieces/" : "BlackPieces/";
+    CreatePromotionButton(buttonPanel.transform, spritePath + "Queen", "Queen");
+    CreatePromotionButton(buttonPanel.transform, spritePath + "Rook", "Rook");
+    CreatePromotionButton(buttonPanel.transform, spritePath + "Bishop", "Bishop");
+    CreatePromotionButton(buttonPanel.transform, spritePath + "Knight", "Knight");
+    
+    // Ensure the panel is active and on top
+    promotionPanel.SetActive(true);
+    promotionPanel.transform.SetAsLastSibling();
+}
+
+    private void CreatePromotionButton(Transform parent, string spritePath, string pieceType)
+    {
+        GameObject button = new GameObject(pieceType + "Button");
+        button.transform.SetParent(parent, false);
+    
+        // Add button component and image
+        Image image = button.AddComponent<Image>();
+        image.color = Color.white;
+    
+        // Load sprite from Resources
+        Sprite sprite = Resources.Load<Sprite>(spritePath);
+        if (sprite != null)
+            image.sprite = sprite;
+        else
+            Debug.LogError($"Failed to load sprite: {spritePath}");
+    
+        // Configure RectTransform
+        RectTransform rect = button.GetComponent<RectTransform>();
+        rect.sizeDelta = new Vector2(80, 80);
+    
+        // Add button component
+        Button buttonComp = button.AddComponent<Button>();
+        ColorBlock colors = buttonComp.colors;
+        colors.normalColor = Color.white;
+        colors.highlightedColor = new Color(0.9f, 0.9f, 1f);
+        buttonComp.colors = colors;
+    
+        // Add listener
+        buttonComp.onClick.AddListener(() => PromotePawn(pieceType));
+    }
+
+    private void PromotePawn(string pieceType)
+    {
+        promotionPanel.SetActive(false);
+
+        SetBoardInteraction(true);
+        // Remove the pawn
+        if (_pieces.TryGetValue(_promotionPosition, out GameObject pawn))
+        {
+            bool isWhite = pawn.GetComponent<ChessPiece>().isWhite;
+            Destroy(pawn);
+            _pieces.Remove(_promotionPosition);
+
+            // Create the new piece
+            GameObject newPiece = null;
+            switch (pieceType.ToLower())
+            {
+                case "queen":
+                    newPiece = Instantiate(isWhite ? whiteQueen : blackQueen);
+                    break;
+                case "rook":
+                    newPiece = Instantiate(isWhite ? whiteRook : blackRook);
+                    break;
+                case "bishop":
+                    newPiece = Instantiate(isWhite ? whiteBishop : blackBishop);
+                    break;
+                case "knight":
+                    newPiece = Instantiate(isWhite ? whiteKnight : blackKnight);
+                    break;
+            }
+
+            if (newPiece != null)
+            {
+                // Initialize the new piece
+                ChessPiece chessPiece = newPiece.GetComponent<ChessPiece>();
+                chessPiece.Initialize(isWhite, this);
+
+                // Position it
+                newPiece.transform.position = GetTileCenter(_promotionPosition) + Constants.offset;
+
+                // Update the pieces dictionary
+                _pieces[_promotionPosition] = newPiece;
+            }
+        }
+
+        _isWaitingForPromotion = false;
+        // Need to end the turn here since MovePiece doesn't do it for promotion cases
+        EndTurn();
+    }
 
     private void MovePiece(ChessPiece piece, Vector2Int targetPos)
     {
         bool isCapture = _pieces.ContainsKey(targetPos);
-        
+
+        // Reset En Passant for all pawns of current player
         foreach (var item in _pieces.Values)
         {
             ChessPiece chessPiece = item.GetComponent<ChessPiece>();
@@ -152,7 +381,7 @@ public class ChessGameManager : MonoBehaviour
                 pawnScript.EnPassantable = false;
             }
         }
-        
+
         Vector2Int oldPos = GetPiecePosition(piece);
         if (oldPos == new Vector2Int(-1, -1))
         {
@@ -215,7 +444,8 @@ public class ChessGameManager : MonoBehaviour
                 pieceScript.EnPassantable = false;
             }
         }
-        
+
+        // Update move counter
         if (piece is Pawn || isCapture)
         {
             movesSinceCapturePawn = 0;
@@ -224,9 +454,22 @@ public class ChessGameManager : MonoBehaviour
         {
             movesSinceCapturePawn++;
         }
-    
+
         // Add the new board state to history
         boardStateHistory.Add(GenerateBoardStateKey());
+
+        // Check for pawn promotion
+        if (piece is Pawn && ((piece.isWhite && targetPos.x == 7) || (!piece.isWhite && targetPos.x == 0)))
+        {
+            _promotionPosition = targetPos;
+            _isWaitingForPromotion = true;
+            ShowPromotionUI(piece.isWhite);
+        }
+        else
+        {
+            // End turn normally if no promotion
+            EndTurn();
+        }
     }
 
     private void MoveRookForCastling(Vector2Int oldPos, Vector2Int newPos)
@@ -921,108 +1164,108 @@ public class ChessGameManager : MonoBehaviour
         HighlightMoves(selectedPiece.GetValidMoves(currentPos));
     }
 
-    public bool IsTileAttacked(Vector2Int targetPos, bool isWhite)
+    public bool IsTileAttacked(Vector2Int targetPos, bool isWhite, Vector2Int? ignorePos = null)
+{
+    foreach (var piece in _pieces.Values)
     {
-        foreach (var piece in _pieces.Values)
+        ChessPiece chessPiece = piece.GetComponent<ChessPiece>();
+        if (chessPiece != null && chessPiece.isWhite != isWhite)
         {
-            ChessPiece chessPiece = piece.GetComponent<ChessPiece>();
-            if (chessPiece != null && chessPiece.isWhite != isWhite)
+            Vector2Int piecePos = GetPiecePosition(chessPiece);
+            if (IsAttackingTile(chessPiece, piecePos, targetPos, ignorePos))
             {
-                Vector2Int piecePos = GetPiecePosition(chessPiece);
-                if (IsAttackingTile(chessPiece, piecePos, targetPos))
-                {
-                    return true;
-                }
+                return true;
             }
+        }
+    }
+    return false;
+}
+
+private bool IsAttackingTile(ChessPiece piece, Vector2Int piecePos, Vector2Int targetPos, Vector2Int? ignorePos = null)
+{
+    // King attacks (1 square in any direction)
+    if (piecePos == targetPos)
+        return false;
+    if (piece is King)
+    {
+        int dx = Mathf.Abs(targetPos.x - piecePos.x);
+        int dy = Mathf.Abs(targetPos.y - piecePos.y);
+        return dx <= 1 && dy <= 1 && (dx > 0 || dy > 0);
+    }
+
+    // Knight attacks
+    if (piece is Knight)
+    {
+        Vector2Int[] offsets =
+        {
+            new Vector2Int(2, 1), new Vector2Int(2, -1),
+            new Vector2Int(-2, 1), new Vector2Int(-2, -1),
+            new Vector2Int(1, 2), new Vector2Int(1, -2),
+            new Vector2Int(-1, 2), new Vector2Int(-1, -2)
+        };
+        foreach (Vector2Int offset in offsets)
+        {
+            if (piecePos + offset == targetPos)
+                return true;
         }
         return false;
     }
 
-    private bool IsAttackingTile(ChessPiece piece, Vector2Int piecePos, Vector2Int targetPos)
+    // Pawn attacks
+    if (piece is Pawn)
     {
-        // King attacks (1 square in any direction)
-        if (piecePos == targetPos)
-            return false;
-        if (piece is King)
-        {
-            int dx = Mathf.Abs(targetPos.x - piecePos.x);
-            int dy = Mathf.Abs(targetPos.y - piecePos.y);
-            return dx <= 1 && dy <= 1 && (dx > 0 || dy > 0);
-        }
-    
-        // Knight attacks
-        if (piece is Knight)
-        {
-            Vector2Int[] offsets =
-            {
-                new Vector2Int(2, 1), new Vector2Int(2, -1),
-                new Vector2Int(-2, 1), new Vector2Int(-2, -1),
-                new Vector2Int(1, 2), new Vector2Int(1, -2),
-                new Vector2Int(-1, 2), new Vector2Int(-1, -2)
-            };
-            foreach (Vector2Int offset in offsets)
-            {
-                if (piecePos + offset == targetPos)
-                    return true;
-            }
-            return false;
-        }
-    
-        // Pawn attacks
-        if (piece is Pawn)
-        {
-            Vector2Int forwardLeft = piece.isWhite ? new Vector2Int(1, -1) : new Vector2Int(-1, 1);
-            Vector2Int forwardRight = piece.isWhite ? new Vector2Int(-1, -1) : new Vector2Int(1, 1);
-            return piecePos + forwardLeft == targetPos || piecePos + forwardRight == targetPos;
-        }
-    
-        // Sliding pieces (Queen, Rook, Bishop)
-        int deltaX = targetPos.x - piecePos.x;
-        int deltaY = targetPos.y - piecePos.y;
-    
-        // Check if target is on same rank/file (Rook, Queen)
-        bool onSameRankOrFile = deltaX == 0 || deltaY == 0;
-        if (onSameRankOrFile && (piece is Rook || piece is Queen))
-        {
-            Vector2Int direction = new Vector2Int(
-                deltaX == 0 ? 0 : deltaX / Mathf.Abs(deltaX),
-                deltaY == 0 ? 0 : deltaY / Mathf.Abs(deltaY)
-            );
-        
-            // Check if path is clear
-            Vector2Int checkPos = piecePos + direction;
-            while (checkPos != targetPos)
-            {
-                if (_pieces.ContainsKey(checkPos))
-                    return false; // Blocked
-                checkPos += direction;
-            }
-            return true; // Clear path to target
-        }
-    
-        // Check if target is on same diagonal (Bishop, Queen)
-        bool onSameDiagonal = Mathf.Abs(deltaX) == Mathf.Abs(deltaY);
-        if (onSameDiagonal && (piece is Bishop || piece is Queen))
-        {
-            Vector2Int direction = new Vector2Int(
-                deltaX / Mathf.Abs(deltaX),
-                deltaY / Mathf.Abs(deltaY)
-            );
-        
-            // Check if path is clear
-            Vector2Int checkPos = piecePos + direction;
-            while (checkPos != targetPos)
-            {
-                if (_pieces.ContainsKey(checkPos))
-                    return false; // Blocked
-                checkPos += direction;
-            }
-            return true; // Clear path to target
-        }
-    
-        return false;
+        int direction = piece.isWhite ? 1 : -1;
+        Vector2Int forwardLeft = new Vector2Int(direction, -1);
+        Vector2Int forwardRight = new Vector2Int(direction, 1);
+        return piecePos + forwardLeft == targetPos || piecePos + forwardRight == targetPos;
     }
 
+    // Sliding pieces (Queen, Rook, Bishop)
+    int deltaX = targetPos.x - piecePos.x;
+    int deltaY = targetPos.y - piecePos.y;
+
+    // Check if target is on same rank/file (Rook, Queen)
+    bool onSameRankOrFile = deltaX == 0 || deltaY == 0;
+    if (onSameRankOrFile && (piece is Rook || piece is Queen))
+    {
+        Vector2Int direction = new Vector2Int(
+            deltaX == 0 ? 0 : deltaX / Mathf.Abs(deltaX),
+            deltaY == 0 ? 0 : deltaY / Mathf.Abs(deltaY)
+        );
+
+        // Check if path is clear, ignoring the specified position
+        Vector2Int checkPos = piecePos + direction;
+        while (checkPos != targetPos)
+        {
+            if (checkPos != ignorePos && _pieces.ContainsKey(checkPos))
+                return false; // Blocked
+            checkPos += direction;
+        }
+        return true; // Clear path to target
+    }
+
+    // Check if target is on same diagonal (Bishop, Queen)
+    bool onSameDiagonal = Mathf.Abs(deltaX) == Mathf.Abs(deltaY);
+    if (onSameDiagonal && (piece is Bishop || piece is Queen))
+    {
+        Vector2Int direction = new Vector2Int(
+            deltaX / Mathf.Abs(deltaX),
+            deltaY / Mathf.Abs(deltaY)
+        );
+
+        // Check if path is clear, ignoring the specified position
+        Vector2Int checkPos = piecePos + direction;
+        while (checkPos != targetPos)
+        {
+            if (checkPos != ignorePos && _pieces.ContainsKey(checkPos))
+                return false; // Blocked
+            checkPos += direction;
+        }
+        return true; // Clear path to target
+    }
+
+    return false;
+}
     private bool IsMoveSafeForKing(ChessPiece piece, Vector2Int from, Vector2Int to)
     {
         Vector2Int kingPos = piece is King ? to : FindKingPosition(piece.isWhite);
@@ -1035,7 +1278,7 @@ public class ChessGameManager : MonoBehaviour
 
         if (piece is King)
         {
-            return !IsTileAttacked(to, piece.isWhite);
+            return !IsTileAttacked(to, piece.isWhite, from);
         }
 
         if (directionToKing.x == 0 || directionToKing.y == 0 ||
