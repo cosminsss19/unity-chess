@@ -3,16 +3,16 @@
   "WorkspaceRootPath": "C:\\Users\\Cosmin\\Desktop\\Licenta\\ChessEngine\\",
   "Documents": [
     {
+      "AbsoluteMoniker": "D:0:0:{E9B74186-64B9-4FB4-AD6D-B8E6F44D7A44}|ChessEngine\\ChessEngine.vcxproj|C:\\Users\\Cosmin\\Desktop\\Licenta\\ChessEngine\\ChessEngine\\ChessEngine.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{E9B74186-64B9-4FB4-AD6D-B8E6F44D7A44}|ChessEngine\\ChessEngine.vcxproj|solutionrelative:ChessEngine\\ChessEngine.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
       "AbsoluteMoniker": "D:0:0:{E9B74186-64B9-4FB4-AD6D-B8E6F44D7A44}|ChessEngine\\ChessEngine.vcxproj|C:\\Users\\Cosmin\\Desktop\\Licenta\\ChessEngine\\ChessEngine\\pch.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{E9B74186-64B9-4FB4-AD6D-B8E6F44D7A44}|ChessEngine\\ChessEngine.vcxproj|solutionrelative:ChessEngine\\pch.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{E9B74186-64B9-4FB4-AD6D-B8E6F44D7A44}|ChessEngine\\ChessEngine.vcxproj|C:\\Users\\Cosmin\\Desktop\\Licenta\\ChessEngine\\ChessEngine\\pch.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{E9B74186-64B9-4FB4-AD6D-B8E6F44D7A44}|ChessEngine\\ChessEngine.vcxproj|solutionrelative:ChessEngine\\pch.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{E9B74186-64B9-4FB4-AD6D-B8E6F44D7A44}|ChessEngine\\ChessEngine.vcxproj|C:\\Users\\Cosmin\\Desktop\\Licenta\\ChessEngine\\ChessEngine\\ChessEngine.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{E9B74186-64B9-4FB4-AD6D-B8E6F44D7A44}|ChessEngine\\ChessEngine.vcxproj|solutionrelative:ChessEngine\\ChessEngine.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{E9B74186-64B9-4FB4-AD6D-B8E6F44D7A44}|ChessEngine\\ChessEngine.vcxproj|C:\\Users\\Cosmin\\Desktop\\Licenta\\ChessEngine\\ChessEngine\\ChessEngine.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
@@ -30,11 +30,11 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 0,
+          "SelectedChildIndex": 1,
           "Children": [
             {
               "$type": "Document",
-              "DocumentIndex": 0,
+              "DocumentIndex": 1,
               "Title": "pch.h",
               "DocumentMoniker": "C:\\Users\\Cosmin\\Desktop\\Licenta\\ChessEngine\\ChessEngine\\pch.h",
               "RelativeDocumentMoniker": "ChessEngine\\pch.h",
@@ -47,13 +47,13 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 2,
+              "DocumentIndex": 0,
               "Title": "ChessEngine.cpp",
               "DocumentMoniker": "C:\\Users\\Cosmin\\Desktop\\Licenta\\ChessEngine\\ChessEngine\\ChessEngine.cpp",
               "RelativeDocumentMoniker": "ChessEngine\\ChessEngine.cpp",
               "ToolTip": "C:\\Users\\Cosmin\\Desktop\\Licenta\\ChessEngine\\ChessEngine\\ChessEngine.cpp",
               "RelativeToolTip": "ChessEngine\\ChessEngine.cpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAcAAAAZAAAAAAAAAA==",
+              "ViewState": "AgIAAEUAAAAAAAAAAAAAADAAAAAcAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2025-04-11T14:17:08.59Z",
               "EditorCaption": ""
@@ -68,12 +68,11 @@
               "RelativeToolTip": "ChessEngine\\ChessEngine.h",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAAIAAAA4AAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2025-04-11T14:15:48.096Z",
-              "EditorCaption": ""
+              "WhenOpened": "2025-04-11T14:15:48.096Z"
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 2,
               "Title": "pch.cpp",
               "DocumentMoniker": "C:\\Users\\Cosmin\\Desktop\\Licenta\\ChessEngine\\ChessEngine\\pch.cpp",
               "RelativeDocumentMoniker": "ChessEngine\\pch.cpp",
@@ -81,8 +80,7 @@
               "RelativeToolTip": "ChessEngine\\pch.cpp",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2025-04-11T14:11:44.453Z",
-              "EditorCaption": ""
+              "WhenOpened": "2025-04-11T14:11:44.453Z"
             },
             {
               "$type": "Document",
@@ -94,8 +92,7 @@
               "RelativeToolTip": "ChessEngine\\dllmain.cpp",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAAEAAAAQAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2025-04-11T14:11:19.835Z",
-              "EditorCaption": ""
+              "WhenOpened": "2025-04-11T14:11:19.835Z"
             }
           ]
         }
