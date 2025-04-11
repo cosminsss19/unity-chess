@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using DefaultNamespace;
@@ -53,6 +55,8 @@ public class ChessGameManager : MonoBehaviour
     public GameObject whiteKnight;
     public GameObject blackKnight;
 
+    [DllImport("ChessEngine")]
+    private static extern IntPtr GetBestMove(string boardState, int depth);
     private void Start()
     {
         StartFunction();
@@ -63,6 +67,12 @@ public class ChessGameManager : MonoBehaviour
         promotionPanelRect.anchorMax = new Vector2(0.5f, 0.5f);
         promotionPanelRect.pivot = new Vector2(0.5f, 0.5f);
         promotionPanelRect.anchoredPosition = Vector2.zero;
+        
+        string boardState = "start position in FEN"; // Replace with actual FEN string
+        int depth = 3; // Example depth
+        IntPtr bestMovePtr = GetBestMove(boardState, depth);
+        string bestMove = Marshal.PtrToStringAnsi(bestMovePtr);
+        Debug.Log("Best Move: " + bestMove);
     }
     private async Task StartFunction()
     {
