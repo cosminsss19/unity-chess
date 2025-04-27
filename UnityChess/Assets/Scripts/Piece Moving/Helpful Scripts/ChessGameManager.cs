@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -55,6 +56,10 @@ public class ChessGameManager : MonoBehaviour
     public GameObject whiteKnight;
     public GameObject blackKnight;
 
+    [Header("Audio")]
+    [SerializeField] private AudioSource audioSource;
+    [SerializeField] private AudioClip pieceMoveSound;
+    
     [DllImport("ChessEngine")]
     private static extern IntPtr GetBestMove(string boardState, int depth);
     private void Start()
@@ -135,6 +140,14 @@ public class ChessGameManager : MonoBehaviour
         return new Vector2Int(x, y);
     }
 
+    private void PlayMoveSound()
+    {
+        if (audioSource != null && pieceMoveSound != null)
+        {
+            audioSource.PlayOneShot(pieceMoveSound);
+        }
+    }
+    
     public void OnTileClicked(Vector2Int tilePos)
     {
         string tileName = _tiles.FirstOrDefault(t => t.Value.GetComponent<ChessTile>().tilePos == tilePos).Key;
@@ -377,9 +390,47 @@ public class ChessGameManager : MonoBehaviour
         EndTurn();
     }
 
+    private IEnumerator AnimatePieceMovement(GameObject pieceObject, Vector3 startPos, Vector3 endPos)
+    {
+        float duration = 0.3f; // Animation duration in seconds
+        float elapsedTime = 0f;
+        float maxHeight = 1.5f; // Maximum height during the arc
+
+        while (elapsedTime < duration)
+        {
+            elapsedTime += Time.deltaTime;
+            float t = elapsedTime / duration;
+        
+            // Create arc movement by manipulating the Y component
+            float normalizedHeight = Mathf.Sin(t * Mathf.PI); // Sin function for smooth up-down
+            float yOffset = normalizedHeight * maxHeight;
+        
+            // Interpolate position with arc
+            Vector3 currentPos = Vector3.Lerp(startPos, endPos, t);
+            currentPos.y = currentPos.y + yOffset;
+        
+            pieceObject.transform.position = currentPos;
+            yield return null;
+        }
+    
+        // Ensure final position is exact
+        pieceObject.transform.position = endPos;
+    }
+    
     private void MovePiece(ChessPiece piece, Vector2Int targetPos)
     {
         bool isCapture = _pieces.ContainsKey(targetPos);
+
+        // Get current position and store for animation
+        Vector2Int oldPos = GetPiecePosition(piece);
+        Vector3 startPos = piece.transform.position;
+        Vector3 endPos = GetTileCenter(targetPos) + Constants.offset;
+
+        if (oldPos == new Vector2Int(-1, -1))
+        {
+            Debug.LogError("Old position not found for piece: " + piece.name);
+            return;
+        }
 
         // Reset En Passant for all pawns of current player
         foreach (var item in _pieces.Values)
@@ -390,13 +441,6 @@ public class ChessGameManager : MonoBehaviour
                 var pawnScript = chessPiece as Pawn;
                 pawnScript.EnPassantable = false;
             }
-        }
-
-        Vector2Int oldPos = GetPiecePosition(piece);
-        if (oldPos == new Vector2Int(-1, -1))
-        {
-            Debug.LogError("Old position not found for piece: " + piece.name);
-            return;
         }
 
         // Remove the piece from its old position in the dictionary
@@ -441,7 +485,15 @@ public class ChessGameManager : MonoBehaviour
 
         // Add the piece to its new position in the dictionary
         _pieces[targetPos] = piece.gameObject;
-        piece.Move(targetPos);
+    
+        // Instead of directly moving the piece, start the animation
+        PlayMoveSound();
+    
+        // Start the animation coroutine
+        StartCoroutine(AnimatePieceMovement(piece.gameObject, startPos, endPos));
+    
+        // Update the logical position of the piece
+        piece.hasMoved = true;
 
         // Set En Passant target square
         if (piece is Pawn)
@@ -1157,21 +1209,49 @@ public class ChessGameManager : MonoBehaviour
 
     public void OnPieceClicked(ChessPiece piece)
     {
-        ClearHighlights();
-        if (piece.isWhite != isWhiteTurn)
+        Vector2Int clickedPiecePos = GetPiecePosition(piece);
+
+        // Case 1: Player is selecting their own piece to move
+        if (selectedPiece == null)
         {
-            Debug.Log("It's not your turn!");
-            return;
+            if (piece.isWhite == isWhiteTurn)
+            {
+                selectedPiece = piece;
+                HighlightMoves(selectedPiece.GetValidMoves(clickedPiecePos));
+            }
         }
+        // Case 2: Player is clicking on an enemy piece to capture it
+        else if (piece.isWhite != isWhiteTurn)
+        {
+            // Check if the clicked enemy piece is on a highlighted tile (valid move)
+            bool isHighlighted = false;
+            foreach (var tile in _tiles.Values)
+            {
+                ChessTile tileScript = tile.GetComponent<ChessTile>();
+                if (tileScript.tilePos == clickedPiecePos)
+                {
+                    var rendererMesh = tile.GetComponentInChildren<MeshRenderer>();
+                    if (rendererMesh != null && 
+                        rendererMesh.material.name == highlightMaterial.name + " (Instance)")
+                    {
+                        isHighlighted = true;
+                        break;
+                    }
+                }
+            }
 
-        Debug.Log("Correct turn!");
-
-        selectedPiece = piece;
-        //send a Debug Log that tells if the selectedPiece is null or not, and the piece name if it isnt null
-        Debug.Log(selectedPiece == null ? "Selected piece is null" : "Selected piece is " + selectedPiece.name);
-        Vector2Int currentPos = GetPiecePosition(piece);
-
-        HighlightMoves(selectedPiece.GetValidMoves(currentPos));
+            if (isHighlighted && selectedPiece.IsValidMove(clickedPiecePos))
+            {
+                MovePiece(selectedPiece, clickedPiecePos);
+            }
+        }
+        // Case 3: Player is selecting a different piece of their color
+        else if (piece.isWhite == isWhiteTurn)
+        {
+            ClearHighlights();
+            selectedPiece = piece;
+            HighlightMoves(selectedPiece.GetValidMoves(clickedPiecePos));
+        }
     }
 
     public bool IsTileAttacked(Vector2Int targetPos, bool isWhite, Vector2Int? ignorePos = null)
