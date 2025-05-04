@@ -1,6 +1,2 @@
-﻿  pch.cpp
-  ChessEngine.cpp
-  dllmain.cpp
-  Generating Code...
-     Creating library C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.lib and object C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.exp
-  ChessEngine.vcxproj -> C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.dll
+﻿     Creating library C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.lib and object C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.exp
+  ChessEngine.vcxproj -> C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.exe

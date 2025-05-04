@@ -34,6 +34,33 @@ struct TTEntry {
     Move bestMove;           // Best move from this position
 };
 
+// Tree node structure for move generation
+struct MoveTreeNode {
+    Move move;                          // The move that led to this position
+    std::string boardState;             // Current board state at this node
+    int evaluation = 0;                 // Evaluation score for this position
+    bool isEvaluated = false;           // Whether this node has been evaluated
+    std::vector<MoveTreeNode*> children; // Child nodes (possible responses)
+    MoveTreeNode* parent = nullptr;     // Parent node
+
+    // Constructor for root node (no move yet)
+    MoveTreeNode(const std::string& state) :
+        boardState(state) {
+    }
+
+    // Constructor for child nodes
+    MoveTreeNode(const std::string& state, const Move& m, MoveTreeNode* p) :
+        boardState(state), move(m), parent(p) {
+    }
+
+    // Destructor to clean up memory
+    ~MoveTreeNode() {
+        for (MoveTreeNode* child : children) {
+            delete child;
+        }
+    }
+};
+
 // Constants for the transposition table flags
 const int TT_EXACT = 0;      // Exact score
 const int TT_ALPHA = 1;      // Upper bound
@@ -42,6 +69,42 @@ const int TT_BETA = 2;       // Lower bound
 // Track the last two killer moves at each depth
 const int MAX_PLY = 64;  // Maximum search depth
 Move killerMoves[MAX_PLY][2] = {};  // Initialize to empty moves
+
+void StoreKillerMove(const Move& move, int ply);
+bool IsKiller(const Move& move, int ply);
+uint64_t GetZobristKey(const std::string& boardState);
+void StoreTranspositionTable(const std::string& boardState, int depth,
+	int flag, int score, const Move& bestMove);
+bool ProbeTranspositionTable(const std::string& boardState, int depth,
+	int& alpha, int& beta, int& score, Move& bestMove);
+MoveTreeNode* BuildMoveTree(const std::string& boardState, int depth, bool isWhiteTurn);
+void ExpandNode(MoveTreeNode* node, int depth, bool isWhiteTurn);
+void OrderMoves(std::vector<Move>& moves, int ply, const std::string& boardState, const Move& ttMove = Move());
+int GetPieceValue(char piece);
+int Quiescence(const std::string& boardState, int alpha, int beta, bool maximizingPlayer, int maxDepth = 4);
+int MinimaxOnTree(MoveTreeNode* node, int depth, int alpha, int beta, bool maximizingPlayer, bool allowNullMove = true);
+bool IsCapture(const std::string& boardState, const Move& move);
+bool IsCheck(const std::string& boardState, const Move& move);
+bool IsDraw(const std::string& boardState);
+std::string ApplyMove(const std::string& boardState, const Move& move);
+bool IsKingInCheck(const std::string& boardState, bool isWhiteKing);
+std::vector<Move> GenerateMoves(const std::string& boardState, bool isWhite);
+int Minimax(std::string boardState, int depth, int alpha, int beta, bool maximizingPlayer);
+bool IsValidMove(const std::string& boardState, int row, int col, bool isWhite);
+void AddMove(const std::string& boardState, int startPos, int endPos, char piece,
+    std::vector<Move>& moves);
+void GeneratePawnMoves(const std::string& boardState, int row, int col, int pos,
+    bool isWhite, std::vector<Move>& moves, int enPassantCol = -1);
+void GenerateKnightMoves(const std::string& boardState, int row, int col, int pos,
+    bool isWhite, std::vector<Move>& moves);
+void GenerateBishopMoves(const std::string& boardState, int row, int col, int pos,
+    bool isWhite, std::vector<Move>& moves);
+void GenerateRookMoves(const std::string& boardState, int row, int col, int pos,
+    bool isWhite, std::vector<Move>& moves);
+void GenerateKingMoves(const std::string& boardState, int row, int col, int pos,
+    bool isWhite, std::vector<Move>& moves);
+int EvaluateBoard(const std::string& boardState);
+
 
 // Store a killer move
 void StoreKillerMove(const Move& move, int ply) {
@@ -114,30 +177,7 @@ bool ProbeTranspositionTable(const std::string& boardState, int depth,
     return false;
 }
 
-// Tree node structure for move generation
-struct MoveTreeNode {
-    Move move;                          // The move that led to this position
-    std::string boardState;             // Current board state at this node
-    int evaluation = 0;                 // Evaluation score for this position
-    bool isEvaluated = false;           // Whether this node has been evaluated
-    std::vector<MoveTreeNode*> children; // Child nodes (possible responses)
-    MoveTreeNode* parent = nullptr;     // Parent node
-    
-    // Constructor for root node (no move yet)
-    MoveTreeNode(const std::string& state) : 
-        boardState(state) {}
-    
-    // Constructor for child nodes
-    MoveTreeNode(const std::string& state, const Move& m, MoveTreeNode* p) : 
-        boardState(state), move(m), parent(p) {}
-    
-    // Destructor to clean up memory
-    ~MoveTreeNode() {
-        for (MoveTreeNode* child : children) {
-            delete child;
-        }
-    }
-};
+
 
 // Build a move tree to a specified depth
 MoveTreeNode* BuildMoveTree(const std::string& boardState, int depth, bool isWhiteTurn) {
@@ -207,7 +247,7 @@ void ExpandNode(MoveTreeNode* node, int depth, bool isWhiteTurn) {
 }
 
 // Helper function to sort nodes by evaluation (for move ordering)
-void OrderMoves(std::vector<Move>& moves, int ply, const std::string& boardState, const Move& ttMove = Move()) {
+void OrderMoves(std::vector<Move>& moves, int ply, const std::string& boardState, const Move& ttMove) {
     // Score each move for sorting
     std::vector<std::pair<int, Move>> scoredMoves;
     
@@ -265,7 +305,7 @@ int GetPieceValue(char piece) {
     }
 }
 
-int Quiescence(const std::string& boardState, int alpha, int beta, bool maximizingPlayer, int maxDepth = 4) {
+int Quiescence(const std::string& boardState, int alpha, int beta, bool maximizingPlayer, int maxDepth) {
     // Base evaluation
     int standPat = EvaluateBoard(boardState);
     
@@ -331,7 +371,7 @@ int Quiescence(const std::string& boardState, int alpha, int beta, bool maximizi
 
 // Enhanced MinimaxOnTree with move ordering and quiescence search
 // Enhanced MinimaxOnTree with null move pruning
-int MinimaxOnTree(MoveTreeNode* node, int depth, int alpha, int beta, bool maximizingPlayer, bool allowNullMove = true) {
+int MinimaxOnTree(MoveTreeNode* node, int depth, int alpha, int beta, bool maximizingPlayer, bool allowNullMove) {
     // If node is already evaluated, return its score
     if (node->isEvaluated) {
         return node->evaluation;
@@ -779,7 +819,7 @@ void AddMove(const std::string& boardState, int startPos, int endPos, char piece
 
 // Enhanced pawn move generation with promotion
 void GeneratePawnMoves(const std::string& boardState, int row, int col, int pos, 
-                        bool isWhite, std::vector<Move>& moves, int enPassantCol = -1)   
+                        bool isWhite, std::vector<Move>& moves, int enPassantCol)   
 {
     const int BOARD_SIZE = 8;
     char piece = isWhite ? 'P' : 'p';
@@ -1211,4 +1251,15 @@ void PrintMoveTree(MoveTreeNode* node, int depth = 0) {
     for (MoveTreeNode* child : node->children) {
         PrintMoveTree(child, depth + 1);
     }
+}
+
+int main() {
+    const char* boardState = "rnbqkbnrpppppppp                                PPPPPPPPRNBQKBNR";
+    int maxDepth = 3;
+    bool isWhite = true;
+
+    const char* bestMove = GetBestMove(boardState, maxDepth, isWhite);
+    std::cout << "Best Move: " << bestMove << std::endl;
+
+    return 0;
 }
