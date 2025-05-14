@@ -38,8 +38,7 @@
               "RelativeToolTip": "ChessEngine\\pch.h",
               "ViewState": "AgIAAAMAAAAAAAAAAAAAAA4AAAAYAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2025-04-11T14:11:55.951Z",
-              "EditorCaption": ""
+              "WhenOpened": "2025-04-11T14:11:55.951Z"
             },
             {
               "$type": "Document",
@@ -47,9 +46,9 @@
               "Title": "ChessEngine.cpp",
               "DocumentMoniker": "C:\\Users\\Cosmin\\Desktop\\Licenta\\ChessEngine\\ChessEngine\\ChessEngine.cpp",
               "RelativeDocumentMoniker": "ChessEngine\\ChessEngine.cpp",
-              "ToolTip": "C:\\Users\\Cosmin\\Desktop\\Licenta\\ChessEngine\\ChessEngine\\ChessEngine.cpp*",
-              "RelativeToolTip": "ChessEngine\\ChessEngine.cpp*",
-              "ViewState": "AgIAAB8GAAAAAAAAAAAAACgGAAACAAAAAAAAAA==",
+              "ToolTip": "C:\\Users\\Cosmin\\Desktop\\Licenta\\ChessEngine\\ChessEngine\\ChessEngine.cpp",
+              "RelativeToolTip": "ChessEngine\\ChessEngine.cpp",
+              "ViewState": "AgIAAE8KAAAAAAAAAAAqwFQKAAAwAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2025-04-11T14:17:08.59Z",
               "EditorCaption": ""
@@ -64,8 +63,7 @@
               "RelativeToolTip": "ChessEngine\\ChessEngine.h",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2025-04-11T14:15:48.096Z",
-              "EditorCaption": ""
+              "WhenOpened": "2025-04-11T14:15:48.096Z"
             }
           ]
         }

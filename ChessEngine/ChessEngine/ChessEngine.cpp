@@ -112,9 +112,9 @@ void GeneratePawnMoves(const std::string& boardState, int row, int col, int pos,
 void GenerateKnightMoves(const std::string& boardState, int row, int col, int pos,
     bool isWhite, std::vector<Move>& moves);
 void GenerateBishopMoves(const std::string& boardState, int row, int col, int pos,
-    bool isWhite, std::vector<Move>& moves);
+    bool isWhite, std::vector<Move>& moves, char actualPiece = '\0');
 void GenerateRookMoves(const std::string& boardState, int row, int col, int pos,
-    bool isWhite, std::vector<Move>& moves);
+    bool isWhite, std::vector<Move>& moves, char actualPiece = '\0');
 void GenerateKingMoves(const std::string& boardState, int row, int col, int pos,
     bool isWhite, std::vector<Move>& moves, const BoardPosition& position, bool skipCastlingCheck = false);
 int EvaluateBoard(const BoardPosition& position);
@@ -124,6 +124,7 @@ int AlgebraicToIndex(const std::string& algebraic);
 std::string IndexToAlgebraic(int index);
 Move AlgebraicToInternalMove(const std::string& algebraicMove, const BoardPosition& position);
 void PrintBoard(const std::string& boardState);
+int EvaluateOpeningPrinciples(const BoardPosition& position);
 // ---------------------------- End of Function declarations ---------------------------- \\
 
 // Store a killer move
@@ -214,15 +215,10 @@ MoveTreeNode* BuildMoveTree(const BoardPosition& position, int depth, bool isWhi
 
     // Create child nodes for each move
     for (const Move& move : possibleMoves) {
-        // --- Apply the move to get new position (must update castling/en passant/etc.) ---
-        // You should implement this function for full legality:
-        // BoardPosition newPosition = ApplyMove(position, move);
+        // Apply the move to get new position (updates all state)
+        BoardPosition newPosition = ApplyMove(position, move);
 
-        // For now, as a placeholder, update only the board state:
-        BoardPosition newPosition = position;
-        newPosition = ApplyMove(position, move);
-        // TODO: update castling rights, en passant, halfmove clock, etc. in newPosition here!
-
+        // Create a child node for this move
         MoveTreeNode* childNode = new MoveTreeNode(newPosition.boardState, move, root);
 
         // Recursively build the tree for this move with reduced depth
@@ -636,13 +632,16 @@ int EvaluateBoard(const BoardPosition& position);
 
 // Apply a move to the board and return the new board state
 BoardPosition ApplyMove(const BoardPosition& position, const Move& move) {
+    if (move.notation.length() < 5) {
+        throw std::invalid_argument("Invalid move notation: '" + move.notation + "'");
+    }
     BoardPosition newPosition = position;
     const int BOARD_SIZE = 8;
 
     // Parse move details
     char piece = move.notation[0];
-    std::string startPosStr = move.notation.substr(1, move.notation.length() - 3);
-    std::string endPosStr = move.notation.substr(move.notation.length() - 2);
+    std::string startPosStr = move.notation.substr(1, 2);
+    std::string endPosStr = move.notation.substr(3, 2);
     int startPos = std::stoi(startPosStr);
     int endPos = std::stoi(endPosStr);
 
@@ -715,6 +714,15 @@ BoardPosition ApplyMove(const BoardPosition& position, const Move& move) {
     }
     newPosition.whiteToMove = !position.whiteToMove;
 
+    // Handle promotion
+    if (move.notation.length() > 5) {
+        char promotionPiece = move.notation[5];
+        // Only promote if the moved piece is a pawn and it reached the last rank
+        if ((piece == 'P' && endPos / 8 == 0) || (piece == 'p' && endPos / 8 == 7)) {
+            newPosition.boardState[endPos] = promotionPiece;
+        }
+    }
+
     return newPosition;
 }
 
@@ -757,12 +765,12 @@ std::vector<Move> GenerateMoves(const BoardPosition& position, bool isWhite, boo
         } else if ((isWhite && piece == 'N') || (!isWhite && piece == 'n')) {
             GenerateKnightMoves(boardState, row, col, i, isWhite, moves);
         } else if ((isWhite && piece == 'B') || (!isWhite && piece == 'b')) {
-            GenerateBishopMoves(boardState, row, col, i, isWhite, moves);
+            GenerateBishopMoves(boardState, row, col, i, isWhite, moves, piece);
         } else if ((isWhite && piece == 'R') || (!isWhite && piece == 'r')) {
-            GenerateRookMoves(boardState, row, col, i, isWhite, moves);
+            GenerateRookMoves(boardState, row, col, i, isWhite, moves, piece);
         } else if ((isWhite && piece == 'Q') || (!isWhite && piece == 'q')) {
-            GenerateBishopMoves(boardState, row, col, i, isWhite, moves);
-            GenerateRookMoves(boardState, row, col, i, isWhite, moves);
+            GenerateBishopMoves(boardState, row, col, i, isWhite, moves, piece);
+            GenerateRookMoves(boardState, row, col, i, isWhite, moves, piece);
         } else if ((isWhite && piece == 'K') || (!isWhite && piece == 'k')) {
             GenerateKingMoves(boardState, row, col, i, isWhite, moves, position, skipCastlingCheck);
         }
@@ -923,8 +931,8 @@ void GenerateKnightMoves(const std::string& boardState, int row, int col, int po
 
 // Bishop move generation
 void GenerateBishopMoves(const std::string& boardState, int row, int col, int pos, 
-                         bool isWhite, std::vector<Move>& moves) {
-    char piece = isWhite ? 'B' : 'b';
+                         bool isWhite, std::vector<Move>& moves, char actualPiece) {
+    char piece = actualPiece ? actualPiece : (isWhite ? 'B' : 'b');
     const std::vector<std::pair<int, int>> directions = {
         {-1, -1}, {-1, 1}, {1, -1}, {1, 1}
     };
@@ -951,8 +959,8 @@ void GenerateBishopMoves(const std::string& boardState, int row, int col, int po
 
 // Rook move generation
 void GenerateRookMoves(const std::string& boardState, int row, int col, int pos, 
-                       bool isWhite, std::vector<Move>& moves) {
-    char piece = isWhite ? 'R' : 'r';
+                       bool isWhite, std::vector<Move>& moves, char actualPiece) {
+    char piece = actualPiece ? actualPiece : (isWhite ? 'R' : 'r');
     const std::vector<std::pair<int, int>> directions = {
         {-1, 0}, {1, 0}, {0, -1}, {0, 1}
     };
@@ -998,6 +1006,9 @@ void GenerateKingMoves(const std::string& boardState, int row, int col, int pos,
         }
     }
 
+    // Helper to format position as two digits
+    auto posStr = [](int p) { return (p < 10 ? "0" : "") + std::to_string(p); };
+
     // --- Castling legality checks ---
     if (!skipCastlingCheck && ((isWhite && row == 7 && col == 4) || (!isWhite && row == 0 && col == 4))) {
         int baseRow = isWhite ? 7 : 0;
@@ -1024,7 +1035,7 @@ void GenerateKingMoves(const std::string& boardState, int row, int col, int pos,
             }
             if (safe) {
                 Move castlingMove;
-                castlingMove.notation = piece + std::to_string(pos) + std::to_string(baseRow * 8 + 6);
+                castlingMove.notation = piece + posStr(pos) + posStr(baseRow * 8 + 6);
                 castlingMove.isCastling = true;
                 castlingMove.isKingsideCastling = true;
                 moves.push_back(castlingMove);
@@ -1053,7 +1064,7 @@ void GenerateKingMoves(const std::string& boardState, int row, int col, int pos,
             }
             if (safe) {
                 Move castlingMove;
-                castlingMove.notation = piece + std::to_string(pos) + std::to_string(baseRow * 8 + 2);
+                castlingMove.notation = piece + posStr(pos) + posStr(baseRow * 8 + 2);
                 castlingMove.isCastling = true;
                 castlingMove.isKingsideCastling = false;
                 moves.push_back(castlingMove);
@@ -1062,13 +1073,188 @@ void GenerateKingMoves(const std::string& boardState, int row, int col, int pos,
     }
 }
 
-// Enhanced evaluation function with more piece-square tables
 int EvaluateBoard(const BoardPosition& position) {
     const std::string& boardState = position.boardState;
     const int BOARD_SIZE = 8;
     int score = 0;
     
-    // Piece-square tables for positional evaluation
+    // Piece values
+    const int PAWN_VALUE = 100;
+    const int KNIGHT_VALUE = 320;
+    const int BISHOP_VALUE = 330;
+    const int ROOK_VALUE = 500;
+    const int QUEEN_VALUE = 900;
+    const int KING_VALUE = 20000;
+
+    // Count material and store piece positions
+    int whitePawns[8] = {0}; // Count of pawns per file
+    int blackPawns[8] = {0}; // Count of pawns per file
+    bool whiteHasBishopPair = false;
+    bool blackHasBishopPair = false;
+    int whiteBishops = 0, blackBishops = 0;
+    int whitePawnCount = 0, blackPawnCount = 0;
+    int whiteRookCount = 0, blackRookCount = 0;
+    int whiteKnightCount = 0, blackKnightCount = 0;
+    int whiteQueenCount = 0, blackQueenCount = 0;
+    int whiteKingPos = -1, blackKingPos = -1;
+    
+    // Phase of game detection (for different piece values in endgame)
+    int totalMaterial = 0;
+    
+    // Store piece positions for further analysis
+    std::vector<int> whitePawnPositions;
+    std::vector<int> blackPawnPositions;
+    std::vector<int> whiteRookPositions;
+    std::vector<int> blackRookPositions;
+    std::vector<int> whiteKnightPositions;
+    std::vector<int> blackKnightPositions;
+    std::vector<int> whiteBishopPositions;
+    std::vector<int> blackBishopPositions;
+    
+    // ----------------- Basic Material Counting ----------------- //
+    for (size_t i = 0; i < boardState.size(); i++) {
+        char piece = boardState[i];
+        int file = i % 8;
+        int rank = i / 8;
+        int pos = rank * BOARD_SIZE + file;
+        
+        // Count material and track piece positions
+        switch (piece) {
+            case 'P': 
+                score += PAWN_VALUE; 
+                whitePawns[file]++;
+                whitePawnCount++;
+                whitePawnPositions.push_back(pos);
+                totalMaterial += PAWN_VALUE;
+                break;
+            case 'p': 
+                score -= PAWN_VALUE; 
+                blackPawns[file]++;
+                blackPawnCount++;
+                blackPawnPositions.push_back(pos);
+                totalMaterial += PAWN_VALUE;
+                break;
+            case 'N': 
+                score += KNIGHT_VALUE;
+                whiteKnightCount++;
+                whiteKnightPositions.push_back(pos);
+                totalMaterial += KNIGHT_VALUE;
+                break;
+            case 'n': 
+                score -= KNIGHT_VALUE;
+                blackKnightCount++;
+                blackKnightPositions.push_back(pos);
+                totalMaterial += KNIGHT_VALUE;
+                break;
+            case 'B': 
+                score += BISHOP_VALUE;
+                whiteBishopPositions.push_back(pos);
+                whiteBishops++;
+                totalMaterial += BISHOP_VALUE;
+                break;
+            case 'b': 
+                score -= BISHOP_VALUE;
+                blackBishopPositions.push_back(pos);
+                blackBishops++;
+                totalMaterial += BISHOP_VALUE;
+                break;
+            case 'R': 
+                score += ROOK_VALUE;
+                whiteRookCount++;
+                whiteRookPositions.push_back(pos);
+                totalMaterial += ROOK_VALUE;
+                break;
+            case 'r': 
+                score -= ROOK_VALUE;
+                blackRookCount++;
+                blackRookPositions.push_back(pos);
+                totalMaterial += ROOK_VALUE;
+                break;
+            case 'Q': 
+                score += QUEEN_VALUE;
+                whiteQueenCount++;
+                totalMaterial += QUEEN_VALUE;
+                break;
+            case 'q': 
+                score -= QUEEN_VALUE;
+                blackQueenCount++;
+                totalMaterial += QUEEN_VALUE;
+                break;
+            case 'K': 
+                score += KING_VALUE;
+                whiteKingPos = pos;
+                break;
+            case 'k': 
+                score -= KING_VALUE;
+                blackKingPos = pos;
+                break;
+        }
+    }
+    
+    // Game phase detection (0 = opening, 1 = middlegame, 2 = endgame)
+    int gamePhase = 0;
+    const int OPENING_THRESHOLD = 5000; // Full material minus some pieces
+    const int MIDDLEGAME_THRESHOLD = 3000;
+    
+    if (totalMaterial <= MIDDLEGAME_THRESHOLD) {
+        gamePhase = 2; // Endgame
+    } else if (totalMaterial <= OPENING_THRESHOLD) {
+        gamePhase = 1; // Middlegame
+    }
+    
+    // FIXED: Special pattern recognition for early opening moves
+    if (gamePhase == 0) {
+        // Apply opening principles with extreme weight
+        int openingScore = EvaluateOpeningPrinciples(position);
+        
+        // If a critical penalty is detected, let it dominate the evaluation
+        if (position.whiteToMove && openingScore < -1000) {
+            return openingScore; // Immediate penalty for white's bad move
+        }
+        else if (!position.whiteToMove && openingScore > 1000) {
+            return openingScore; // Immediate penalty for black's bad move
+        }
+        
+        // Otherwise, add to existing score
+        score += openingScore;
+    }
+    
+    // ----------------- Central Control Bonus (Opening) ----------------- //
+    if (gamePhase == 0) {
+        // Central control bonus - reward pieces and pawns in the center
+        for (int i = 0; i < 64; i++) {
+            int rank = i / 8;
+            int file = i % 8;
+            
+            // Define central squares (e4, d4, e5, d5)
+            bool isCentralSquare = (rank >= 3 && rank <= 4 && file >= 3 && file <= 4);
+            
+            // Define near-central squares
+            bool isNearCentralSquare = (rank >= 2 && rank <= 5 && file >= 2 && file <= 5) && !isCentralSquare;
+            
+            char piece = boardState[i];
+            if (piece != ' ') {
+                bool isWhitePiece = isupper(piece);
+                
+                if (isCentralSquare) {
+                    if (isWhitePiece) {
+                        score += 25; // Central bonus for white pieces
+                    } else {
+                        score -= 25; // Central bonus for black pieces
+                    }
+                }
+                else if (isNearCentralSquare) {
+                    if (isWhitePiece) {
+                        score += 10; // Near-center bonus for white pieces
+                    } else {
+                        score -= 10; // Near-center bonus for black pieces
+                    }
+                }
+            }
+        }
+    }
+    
+    // ----------------- Positional Evaluation ----------------- //
     static const int pawnTable[64] = {
         0,  0,  0,  0,  0,  0,  0,  0,
         50, 50, 50, 50, 50, 50, 50, 50,
@@ -1135,63 +1321,461 @@ int EvaluateBoard(const BoardPosition& position) {
          20, 30, 10,  0,  0, 10, 30, 20
     };
     
-    // Count material and add positional bonuses
-    for (size_t i = 0; i < boardState.size(); i++) {
-        char piece = boardState[i];
-        int row = i / BOARD_SIZE;
-        int col = i % BOARD_SIZE;
-        int pos = row * BOARD_SIZE + col;
-        
-        switch (piece) {
-            case 'P': 
-                score += 100; 
-                score += pawnTable[pos];
-                break;
-            case 'p': 
-                score -= 100; 
-                score -= pawnTable[63 - pos]; // Flip for black
-                break;
-            case 'N': 
-                score += 320;
-                score += knightTable[pos];
-                break;
-            case 'n': 
-                score -= 320;
-                score -= knightTable[63 - pos];
-                break;
-            case 'B': 
-                score += 330;
-                score += bishopTable[pos];
-                break;
-            case 'b': 
-                score -= 330;
-                score -= bishopTable[63 - pos];
-                break;
-            case 'R': 
-                score += 500;
-                score += rookTable[pos];
-                break;
-            case 'r': 
-                score -= 500;
-                score -= rookTable[63 - pos];
-                break;
-            case 'Q': 
-                score += 900;
-                score += queenTable[pos];
-                break;
-            case 'q': 
-                score -= 900;
-                score -= queenTable[63 - pos];
-                break;
-            case 'K': 
-                score += 20000;
-                score += kingMiddlegameTable[pos];
-                break;
-            case 'k': 
-                score -= 20000;
-                score -= kingMiddlegameTable[63 - pos];
-                break;
+    // King endgame table - encourages king activity in endgames
+    static const int kingEndgameTable[64] = {
+        -50,-40,-30,-20,-20,-30,-40,-50,
+        -30,-20,-10,  0,  0,-10,-20,-30,
+        -30,-10, 20, 30, 30, 20,-10,-30,
+        -30,-10, 30, 40, 40, 30,-10,-30,
+        -30,-10, 30, 40, 40, 30,-10,-30,
+        -30,-10, 20, 30, 30, 20,-10,-30,
+        -30,-30,  0,  0,  0,  0,-30,-30,
+        -50,-30,-30,-30,-30,-30,-30,-50
+    };
+    
+    // Apply piece-square tables
+    for (int pawnPos : whitePawnPositions) {
+        score += pawnTable[pawnPos];
+    }
+    for (int pawnPos : blackPawnPositions) {
+        score -= pawnTable[63 - pawnPos]; // Flip for black
+    }
+    
+    for (int knightPos : whiteKnightPositions) {
+        score += knightTable[knightPos];
+    }
+    for (int knightPos : blackKnightPositions) {
+        score -= knightTable[63 - knightPos]; // Flip for black
+    }
+    
+    for (int bishopPos : whiteBishopPositions) {
+        score += bishopTable[bishopPos];
+    }
+    for (int bishopPos : blackBishopPositions) {
+        score -= bishopTable[63 - bishopPos]; // Flip for black
+    }
+    
+    for (int rookPos : whiteRookPositions) {
+        score += rookTable[rookPos];
+    }
+    for (int rookPos : blackRookPositions) {
+        score -= rookTable[63 - rookPos]; // Flip for black
+    }
+    
+    // Apply king tables based on game phase
+    if (whiteKingPos >= 0) {
+        if (gamePhase < 2) {
+            score += kingMiddlegameTable[whiteKingPos];
+        } else {
+            score += kingEndgameTable[whiteKingPos] * 2;
         }
+    }
+    
+    if (blackKingPos >= 0) {
+        if (gamePhase < 2) {
+            score -= kingMiddlegameTable[63 - blackKingPos]; // Flip for black
+        } else {
+            score -= kingEndgameTable[63 - blackKingPos] * 2;
+        }
+    }
+    
+    // ----------------- SEVERE Knight Edge Penalties ----------------- //
+    for (int knightPos : whiteKnightPositions) {
+        int file = knightPos % 8;
+        int rank = knightPos / 8;
+        
+        // UPDATED: Severe penalty for knights on the rim (a & h files)
+        if (file == 0 || file == 7) {
+            score -= 50; // Increased penalty for edge knight
+            if (rank == 2 || rank == 5) { // a3/a6 or h3/h6 are particularly bad
+                score -= 30; // Additional severe penalty for worst squares
+            }
+        }
+        
+        // Calculate actual knight mobility
+        int actualMobility = 0;
+        const std::vector<std::pair<int, int>> knightMoves = {
+            {-2, -1}, {-2, 1}, {-1, -2}, {-1, 2},
+            {1, -2}, {1, 2}, {2, -1}, {2, 1}
+        };
+        
+        for (const auto& move : knightMoves) {
+            int newRow = rank + move.first;
+            int newCol = file + move.second;
+            
+            if (newRow >= 0 && newRow < 8 && newCol >= 0 && newCol < 8) {
+                char targetSquare = boardState[newRow * 8 + newCol];
+                if (targetSquare == ' ' || islower(targetSquare)) {
+                    actualMobility++;
+                }
+            }
+        }
+        
+        score += actualMobility * 4; // Significant bonus for knight mobility
+    }
+    
+    for (int knightPos : blackKnightPositions) {
+        int file = knightPos % 8;
+        int rank = knightPos / 8;
+        
+        // UPDATED: Severe penalty for knights on the rim
+        if (file == 0 || file == 7) {
+            score += 100; // INCREASED: Much stronger penalty for black's edge knight
+            if (rank == 2 || rank == 5) { // a3/a6 or h3/h6 are particularly bad
+                score += 50; // Additional severe penalty for worst squares
+            }
+        }
+        
+        // Calculate actual knight mobility
+        int actualMobility = 0;
+        const std::vector<std::pair<int, int>> knightMoves = {
+            {-2, -1}, {-2, 1}, {-1, -2}, {-1, 2},
+            {1, -2}, {1, 2}, {2, -1}, {2, 1}
+        };
+        
+        for (const auto& move : knightMoves) {
+            int newRow = rank + move.first;
+            int newCol = file + move.second;
+            
+            if (newRow >= 0 && newRow < 8 && newCol >= 0 && newCol < 8) {
+                char targetSquare = boardState[newRow * 8 + newCol];
+                if (targetSquare == ' ' || isupper(targetSquare)) {
+                    actualMobility++;
+                }
+            }
+        }
+        
+        score -= actualMobility * 4; // Penalize black knight mobility
+    }
+    
+    // ----------------- Bishop Pair Bonus ----------------- //
+    if (whiteBishops >= 2) {
+        score += 50; // Bonus for having the bishop pair
+        whiteHasBishopPair = true;
+    }
+    if (blackBishops >= 2) {
+        score -= 50; // Same bonus for black
+        blackHasBishopPair = true;
+    }
+    
+    // ----------------- Trapped Pieces Detection ----------------- //
+    // Check for trapped bishops
+    for (int bishopPos : whiteBishopPositions) {
+        // Bishop trapped in corner with pawn blocking it
+        if ((bishopPos == 56 || bishopPos == 63) && 
+            (boardState[bishopPos - 8] == 'P' || boardState[bishopPos - 9] == 'P' || boardState[bishopPos - 7] == 'P')) {
+            score -= 100; // Severe penalty
+        }
+    }
+    
+    for (int bishopPos : blackBishopPositions) {
+        // Bishop trapped in corner with pawn blocking it
+        if ((bishopPos == 0 || bishopPos == 7) && 
+            (boardState[bishopPos + 8] == 'p' || boardState[bishopPos + 9] == 'p' || boardState[bishopPos + 7] == 'p')) {
+            score += 100; // Severe penalty for black
+        }
+    }
+    
+    // ----------------- Knight Outposts ----------------- //
+    for (int knightPos : whiteKnightPositions) {
+        int rank = knightPos / 8;
+        int file = knightPos % 8;
+        
+        // Only consider outposts in enemy territory (ranks 0-3)
+        if (rank < 4) {
+            bool isPawnProtected = false;
+            if (file > 0 && rank < 7 && boardState[(rank+1)*8 + file-1] == 'P') {
+                isPawnProtected = true;
+            }
+            if (file < 7 && rank < 7 && boardState[(rank+1)*8 + file+1] == 'P') {
+                isPawnProtected = true;
+            }
+            
+            bool isSafeFromPawns = true;
+            if (file > 0 && rank > 0 && boardState[(rank-1)*8 + file-1] == 'p') {
+                isSafeFromPawns = false;
+            }
+            if (file < 7 && rank > 0 && boardState[(rank-1)*8 + file+1] == 'p') {
+                isSafeFromPawns = false;
+            }
+            
+            if (isPawnProtected && isSafeFromPawns) {
+                score += 25; // Bonus for knight outpost
+            }
+        }
+    }
+    
+    for (int knightPos : blackKnightPositions) {
+        int rank = knightPos / 8;
+        int file = knightPos % 8;
+        
+        // Only consider outposts in enemy territory (ranks 4-7)
+        if (rank > 3) {
+            bool isPawnProtected = false;
+            if (file > 0 && rank > 0 && boardState[(rank-1)*8 + file-1] == 'p') {
+                isPawnProtected = true;
+            }
+            if (file < 7 && rank > 0 && boardState[(rank-1)*8 + file+1] == 'p') {
+                isPawnProtected = true;
+            }
+            
+            bool isSafeFromPawns = true;
+            if (file > 0 && rank < 7 && boardState[(rank+1)*8 + file-1] == 'P') {
+                isSafeFromPawns = false;
+            }
+            if (file < 7 && rank < 7 && boardState[(rank+1)*8 + file+1] == 'P') {
+                isSafeFromPawns = false;
+            }
+            
+            if (isPawnProtected && isSafeFromPawns) {
+                score -= 25; // Bonus for black knight outpost
+            }
+        }
+    }
+    
+    // ----------------- Pawn Structure Evaluation ----------------- //
+    // Doubled pawns (same file)
+    for (int file = 0; file < 8; file++) {
+        if (whitePawns[file] > 1) {
+            score -= 20 * (whitePawns[file] - 1); // Penalty for each doubled pawn
+        }
+        if (blackPawns[file] > 1) {
+            score += 20 * (blackPawns[file] - 1); // Same penalty for black
+        }
+    }
+    
+    // Isolated and passed pawns
+    for (int pawnPos : whitePawnPositions) {
+        int file = pawnPos % 8;
+        int rank = pawnPos / 8;
+        
+        // Check for isolated pawns (no friendly pawns on adjacent files)
+        bool isIsolated = true;
+        if (file > 0 && whitePawns[file-1] > 0) isIsolated = false;
+        if (file < 7 && whitePawns[file+1] > 0) isIsolated = false;
+        
+        if (isIsolated) {
+            score -= 15; // Penalty for isolated pawn
+        }
+        
+        // Check for passed pawns (no enemy pawns ahead or on adjacent files)
+        bool isPassed = true;
+        for (int r = rank - 1; r >= 0; r--) {
+            for (int f = customMax(0, file-1); f <= customMin(7, file+1); f++) {
+                if (boardState[r*8+f] == 'p') {
+                    isPassed = false;
+                    break;
+                }
+            }
+            if (!isPassed) break;
+        }
+        
+        if (isPassed) {
+            // Progressive bonus based on rank (more advanced = more valuable)
+            int passedBonus = 20 + (7 - rank) * 10;
+            if (gamePhase == 2) passedBonus *= 2; // Even more valuable in endgame
+            score += passedBonus;
+        }
+        
+        // Penalty for pawn shield advancement that weakens king safety
+        if (gamePhase < 2 && whiteKingPos >= 0) {
+            int kingFile = whiteKingPos % 8;
+            if (abs(file - kingFile) <= 1 && rank < 6) {
+                score -= (6 - rank) * 5; // Penalty for advancing shield pawns
+            }
+        }
+    }
+    
+    // Do the same for black pawns
+    for (int pawnPos : blackPawnPositions) {
+        int file = pawnPos % 8;
+        int rank = pawnPos / 8;
+        
+        // Check for isolated pawns
+        bool isIsolated = true;
+        if (file > 0 && blackPawns[file-1] > 0) isIsolated = false;
+        if (file < 7 && blackPawns[file+1] > 0) isIsolated = false;
+        
+        if (isIsolated) {
+            score += 15; // Penalty for black's isolated pawn
+        }
+        
+        // Check for passed pawns
+        bool isPassed = true;
+        for (int r = rank + 1; r < 8; r++) {
+            for (int f = customMax(0, file-1); f <= customMin(7, file+1); f++) {
+                if (boardState[r*8+f] == 'P') {
+                    isPassed = false;
+                    break;
+                }
+            }
+            if (!isPassed) break;
+        }
+        
+        if (isPassed) {
+            int passedBonus = 20 + rank * 10; // Progressive bonus based on rank
+            if (gamePhase == 2) passedBonus *= 2;
+            score -= passedBonus;
+        }
+        
+        // Penalty for pawn shield advancement that weakens king safety
+        if (gamePhase < 2 && blackKingPos >= 0) {
+            int kingFile = blackKingPos % 8;
+            if (abs(file - kingFile) <= 1 && rank > 1) {
+                score += (rank - 1) * 5; // Penalty for advancing shield pawns
+            }
+        }
+    }
+    
+    // ----------------- Rook Positioning ----------------- //
+    // Rooks on open files (files with no pawns)
+    for (int rookPos : whiteRookPositions) {
+        int file = rookPos % 8;
+        
+        // Check if the file is completely open
+        if (whitePawns[file] == 0 && blackPawns[file] == 0) {
+            score += 25; // Bonus for rook on open file
+        }
+        // Check if the file is semi-open (no friendly pawns)
+        else if (whitePawns[file] == 0) {
+            score += 15; // Smaller bonus for semi-open file
+        }
+        
+        // Bonus for rook on 7th rank (if enemy king is on 8th)
+        if (rookPos / 8 == 1 && blackKingPos / 8 == 0) {
+            score += 30;
+        }
+    }
+    
+    // Same for black rooks
+    for (int rookPos : blackRookPositions) {
+        int file = rookPos % 8;
+        
+        if (whitePawns[file] == 0 && blackPawns[file] == 0) {
+            score -= 25;
+        }
+        else if (blackPawns[file] == 0) {
+            score -= 15;
+        }
+        
+        // Bonus for rook on 2nd rank (if enemy king is on 1st)
+        if (rookPos / 8 == 6 && whiteKingPos / 8 == 7) {
+            score -= 30;
+        }
+    }
+    
+    // ----------------- King Safety ----------------- //
+    // King pawn shield (only in opening/middlegame)
+    if (gamePhase < 2) {
+        if (whiteKingPos >= 0) {
+            int kingFile = whiteKingPos % 8;
+            int kingRank = whiteKingPos / 8;
+            
+            // Check pawns in front of king
+            int pawnShieldCount = 0;
+            for (int f = customMax(0, kingFile-1); f <= customMin(7, kingFile+1); f++) {
+                for (int r = customMax(0, kingRank-2); r <= kingRank-1; r++) {
+                    if (boardState[r*8+f] == 'P') {
+                        pawnShieldCount++;
+                    }
+                }
+            }
+            
+            score += pawnShieldCount * 10; // Bonus for each pawn in shield
+        }
+        
+        if (blackKingPos >= 0) {
+            int kingFile = blackKingPos % 8;
+            int kingRank = blackKingPos / 8;
+            
+            int pawnShieldCount = 0;
+            for (int f = customMax(0, kingFile-1); f <= customMin(7, kingFile+1); f++) {
+                for (int r = kingRank+1; r <= customMin(7, kingRank+2); r++) {
+                    if (boardState[r*8+f] == 'p') {
+                        pawnShieldCount++;
+                    }
+                }
+            }
+            
+            score -= pawnShieldCount * 10;
+        }
+    }
+    
+    // ----------------- Development in Opening ----------------- //
+    if (gamePhase == 0) { // Only in opening phase
+        // Penalize unmoved knights and bishops, but not as severely to prevent bad development
+        if (boardState[57] == 'N') score -= 15; // Queenside knight (reduced from 20)
+        if (boardState[62] == 'N') score -= 15; // Kingside knight (reduced from 20)
+        if (boardState[58] == 'B') score -= 10; // Queenside bishop (reduced from 15)
+        if (boardState[61] == 'B') score -= 10; // Kingside bishop (reduced from 15)
+        
+        // Same for black
+        if (boardState[1] == 'n') score += 15; // Queenside knight (reduced from 20)
+        if (boardState[6] == 'n') score += 15; // Kingside knight (reduced from 20) 
+        if (boardState[2] == 'b') score += 10; // Queenside bishop (reduced from 15)
+        if (boardState[5] == 'b') score += 10; // Kingside bishop (reduced from 15)
+        
+        // Penalty for queen development too early
+        for (size_t i = 0; i < boardState.size(); i++) {
+            if (boardState[i] == 'Q' && i != 59) {
+                int moveCount = position.fullMoveNumber;
+                if (moveCount < 5) {
+                    score -= 30; // Penalty for early queen development
+                }
+            }
+            if (boardState[i] == 'q' && i != 3) {
+                int moveCount = position.fullMoveNumber;
+                if (moveCount < 5) {
+                    score += 30; // Penalty for black's early queen development
+                }
+            }
+        }
+        
+        // UPDATED: Much stronger bonuses for key opening responses to e4
+        if (position.fullMoveNumber <= 2 && !position.whiteToMove) {
+            // Check if white played e4
+            if (boardState[36] == 'P' && boardState[52] == ' ') {
+                // Bonus for e5 response
+                if (boardState[12] == 'p') {
+                    score -= 80; // Much stronger bonus for e5
+                }
+                // Bonus for c5 (Sicilian)
+                if (boardState[10] == 'p') {
+                    score -= 75; // Stronger bonus for c5
+                }
+                // Bonus for e6 (French)
+                if (boardState[20] == 'p') {
+                    score -= 70; // Stronger bonus for e6
+                }
+                // Bonus for c6 (Caro-Kann)
+                if (boardState[18] == 'p') {
+                    score -= 70; // Stronger bonus for c6
+                }
+            }
+        }
+    }
+    
+    // ----------------- Mobility ----------------- //
+    // Only count piece mobility other than knights (already handled separately)
+    int whiteMobility = 0, blackMobility = 0;
+    
+    // Generate moves for each side and count them
+    std::vector<Move> whiteMoves = GenerateMoves(position, true, true);
+    std::vector<Move> blackMoves = GenerateMoves(position, false, true);
+    
+    whiteMobility = whiteMoves.size() - whiteKnightPositions.size() * 8;
+    blackMobility = blackMoves.size() - blackKnightPositions.size() * 8;
+    
+    // Apply mobility bonus (scaled by phase)
+    if (gamePhase == 0) { // Opening - moderate mobility importance
+        score += whiteMobility * 2;
+        score -= blackMobility * 2;
+    } else if (gamePhase == 1) { // Middlegame - higher mobility importance
+        score += whiteMobility * 3;
+        score -= blackMobility * 3;
+    } else { // Endgame - moderate mobility importance
+        score += whiteMobility * 2;
+        score -= blackMobility * 2;
     }
     
     // Bonus for checking the opponent's king
@@ -1201,12 +1785,6 @@ int EvaluateBoard(const BoardPosition& position) {
     if (IsKingInCheck(position, true)) {
         score -= 50; // Penalty for white king being in check
     }
-
-    // (Optional) Add more evaluation terms using position fields, e.g.:
-    // - Bonus for castling rights
-    // - Penalty for doubled/isolated pawns
-    // - Bonus for passed pawns
-    // - Penalty for no castling rights, etc.
     
     return score;
 }
@@ -1243,7 +1821,7 @@ BoardPosition ParseMoveHistory(const std::string& moveHistory) {
             Move internalMove = AlgebraicToInternalMove(move, position);
             position = ApplyMove(position, internalMove);
             PrintBoard(position.boardState);
-            position.whiteToMove = !position.whiteToMove;
+            //position.whiteToMove = !position.whiteToMove;
         } catch (const std::exception& e) {
             std::cerr << "Error applying move '" << move << "': " << e.what() << std::endl;
             throw; // or continue;
@@ -1406,28 +1984,337 @@ void PrintBoard(const std::string& boardState) {
 }
 
 Move AlgebraicToInternalMove(const std::string& algebraicMove, const BoardPosition& position) {
-    // Only supports simple moves, not promotions/castling/en passant for now
-    int index = 0;
-    std::string from, to;
-    if (isupper(algebraicMove[0]) && !isdigit(algebraicMove[1])) {
-        index = 1;
+    // Handle castling
+    if (algebraicMove == "O-O" || algebraicMove == "0-0") {
+        Move move;
+        move.isCastling = true;
+        move.isKingsideCastling = true;
+        move.notation = (position.whiteToMove ? "K" : "k") + std::string(position.whiteToMove ? "6062" : "0406");
+        return move;
     }
-    from = algebraicMove.substr(index, 2);
-    if (algebraicMove.find('x') != std::string::npos) {
-        to = algebraicMove.substr(algebraicMove.find('x') + 1, 2);
-    } else {
-        to = algebraicMove.substr(from.length() + index, 2);
+    if (algebraicMove == "O-O-O" || algebraicMove == "0-0-0") {
+        Move move;
+        move.isCastling = true;
+        move.isKingsideCastling = false;
+        move.notation = (position.whiteToMove ? "K" : "k") + std::string(position.whiteToMove ? "6062" : "0402");
+        return move;
     }
+
+    // Handle promotion (e.g., e7e8Q or e7e8=Q)
+    std::string moveStr = algebraicMove;
+    char promotion = '\0';
+    size_t promoPos = moveStr.find('=');
+    if (promoPos != std::string::npos) {
+        promotion = moveStr[promoPos + 1];
+        moveStr = moveStr.substr(0, promoPos);
+    } else if (moveStr.length() == 5 && isalpha(moveStr[4])) {
+        promotion = moveStr[4];
+        moveStr = moveStr.substr(0, 4);
+    }
+
+    // Parse from and to squares
+    std::string from = moveStr.substr(0, 2);
+    std::string to = moveStr.substr(2, 2);
     int fromIndex = AlgebraicToIndex(from);
     int toIndex = AlgebraicToIndex(to);
-
-    // Use the actual piece on the board at the from square!
     char piece = position.boardState[fromIndex];
 
+    Move move;
     std::string startPosStr = (fromIndex < 10) ? "0" + std::to_string(fromIndex) : std::to_string(fromIndex);
     std::string endPosStr = (toIndex < 10) ? "0" + std::to_string(toIndex) : std::to_string(toIndex);
-    std::string notation = piece + startPosStr + endPosStr;
-    return { notation };
+    move.notation = piece + startPosStr + endPosStr;
+
+    // Handle en passant
+    if ((tolower(piece) == 'p') && (fromIndex % 8 != toIndex % 8) && position.boardState[toIndex] == ' ') {
+        move.isEnPassant = true;
+        move.enPassantCapturePos = position.whiteToMove ? (toIndex + 8) : (toIndex - 8);
+    }
+
+    // Handle promotion
+    if (promotion) {
+        move.notation += promotion;
+    }
+
+    return move;
+}
+
+// Add this helper function before EvaluateBoard
+// Enhanced opening principles evaluation function
+int EvaluateOpeningPrinciples(const BoardPosition& position) {
+   int score = 0;
+    const std::string& boardState = position.boardState;
+    int moveNum = position.fullMoveNumber;
+
+    // === WHITE'S FIRST MOVE - Direct Score Override ===
+    // First moves for White are so critically important we want to 
+    // enforce specific move choices rather than relying on evaluation
+    if (moveNum == 1 && position.whiteToMove) {
+        // e4 - highest priority
+        if (boardState[52] == ' ' && boardState[36] == 'P') {
+            return 5000; // Direct fixed score, not a bonus
+        }
+        
+        // d4 - second priority
+        if (boardState[51] == ' ' && boardState[35] == 'P') {
+            return 4800;
+        }
+        
+        // Nf3 - third priority
+        if (boardState[62] == ' ' && boardState[45] == 'N') {
+            return 4600;
+        }
+        
+        // c4 - fourth priority
+        if (boardState[50] == ' ' && boardState[34] == 'P') {
+            return 4400;
+        }
+    }
+
+    // ===== BAD MOVES - EXTREMELY SEVERE PENALTIES =====
+    if (moveNum <= 3) {  // Only in first few moves
+        // ----- WHITE'S BAD MOVES -----
+        if (position.whiteToMove) {
+            // BAD PAWN MOVES (edge pawns that don't control center)
+            // a2-a3 check
+            if (boardState[48] == ' ' && boardState[40] == 'P') {
+                return -3000;  // Direct extreme penalty, not a bonus adjustment
+            }
+            
+            // h2-h3 check
+            if (boardState[55] == ' ' && boardState[47] == 'P') {
+                return -3000;
+            }
+            
+            // BAD KNIGHT MOVES (to edges)
+            // Knight to a3
+            if (boardState[57] == ' ' && boardState[40] == 'N') {
+                return -3000;
+            }
+            
+            // Knight to h3
+            if (boardState[62] == ' ' && boardState[47] == 'N') {
+                return -3000;
+            }
+            
+            // Knight to edge (a-file or h-file)
+            for (int i = 0; i < 64; i++) {
+                int file = i % 8;
+                if ((file == 0 || file == 7) && boardState[i] == 'N') {
+                    return -2000;
+                }
+            }
+        }
+        // ----- BLACK'S BAD MOVES -----
+        else {
+            // BAD PAWN MOVES
+            // a7-a6 check
+            if (boardState[8] == ' ' && boardState[16] == 'p') {
+                return 3000;  // Extreme penalty (positive hurts Black)
+            }
+            
+            // h7-h6 check
+            if (boardState[15] == ' ' && boardState[23] == 'p') {
+                return 3000;
+            }
+            
+            // Na6 check (specific response to e4)
+            if (boardState[36] == 'P' && boardState[1] == ' ' && boardState[16] == 'n') {
+                return 3000;  // CORRECTED: Positive score (bad for Black)
+            }
+            
+            // Nh6 check (specific response to e4)
+            if (boardState[36] == 'P' && boardState[6] == ' ' && boardState[23] == 'n') {
+                return 3000;  // CORRECTED: Positive score (bad for Black)
+            }
+            
+            // Knight to edge (a-file or h-file)
+            for (int i = 0; i < 64; i++) {
+                int file = i % 8;
+                if ((file == 0 || file == 7) && boardState[i] == 'n') {
+                    return 2000;  // Positive score (bad for Black)
+                }
+            }
+            
+            // === BLACK'S RESPONSES TO WHITE OPENINGS ===
+            // After e4, these are the best responses
+            if (boardState[36] == 'P' && boardState[52] == ' ') {
+                // e5 (1. e4 e5)
+                if (boardState[12] == 'p' && boardState[20] == ' ') {
+                    return -800;  // Extremely good for Black
+                }
+                
+                // c5 - Sicilian (1. e4 c5)
+                if (boardState[10] == 'p' && boardState[18] == ' ') {
+                    return -750;
+                }
+                
+                // e6 - French (1. e4 e6)
+                if (boardState[28] == 'p') {
+                    return -700;
+                }
+                
+                // c6 - Caro-Kann (1. e4 c6)
+                if (boardState[26] == 'p') {
+                    return -700;
+                }
+            }
+            
+            // After d4, these are the best responses
+            if (boardState[35] == 'P' && boardState[51] == ' ') {
+                // d5 (1. d4 d5)
+                if (boardState[11] == 'p' && boardState[19] == ' ') {
+                    return -800;
+                }
+                
+                // Nf6 - Indian Defenses (1. d4 Nf6)
+                if (boardState[6] == ' ' && boardState[21] == 'n') {
+                    return -750;
+                }
+            }
+        }
+    }
+    
+    // ===== GOOD MOVES - STRONG BONUSES =====
+    if (moveNum <= 3) {
+        // ----- WHITE'S GOOD MOVES -----
+        if (position.whiteToMove) {
+            // Central pawn advances
+            // e4
+            if (boardState[52] == ' ' && boardState[36] == 'P') {
+                score += 500;  // Much stronger bonus
+            }
+            
+            // d4
+            if (boardState[51] == ' ' && boardState[35] == 'P') {
+                score += 450;
+            }
+            
+            // c4
+            if (boardState[50] == ' ' && boardState[34] == 'P') {
+                score += 400;
+            }
+            
+            // Good knight development
+            if (boardState[62] == ' ' && boardState[45] == 'N') { // Nf3
+                score += 450;
+            }
+            
+            if (boardState[57] == ' ' && boardState[42] == 'N') { // Nc3
+                score += 400;
+            }
+        }
+        // ----- BLACK'S GOOD MOVES -----
+        else {
+            // e4 has been played by White
+            if (boardState[36] == 'P' && boardState[52] == ' ') {
+                // e5 response
+                if (boardState[20] == ' ' && boardState[12] == 'p') {
+                    score -= 500; // Strong bonus for e5 (negative helps Black)
+                }
+                
+                // c5 response (Sicilian)
+                if (boardState[18] == ' ' && boardState[10] == 'p') {
+                    score -= 450;
+                }
+                
+                // e6 response (French)
+                if (boardState[20] == ' ' && boardState[28] == 'p') {
+                    score -= 400;
+                }
+                
+                // c6 response (Caro-Kann)
+                if (boardState[18] == ' ' && boardState[26] == 'p') {
+                    score -= 400;
+                }
+            }
+        }
+    }
+    
+    // ----- GENERAL OPENING PRINCIPLES (first ~10 moves) -----
+    if (moveNum <= 10) {
+        // CENTER CONTROL - Add bonuses for central pawns and pieces
+        int whiteCenterControl = 0;
+        int blackCenterControl = 0;
+        
+        // The central squares (d4, e4, d5, e5)
+        int centralSquares[4] = {35, 36, 27, 28};
+        
+        // Count control of center squares
+        for (int sq : centralSquares) {
+            // Pawn control
+            if (sq-8 >= 0 && sq-8 < 64) {
+                if (boardState[sq-8] == 'P') whiteCenterControl += 2;
+                if (boardState[sq-8] == 'p') blackCenterControl += 2;
+            }
+            if (sq+8 >= 0 && sq+8 < 64) {
+                if (boardState[sq+8] == 'p') blackCenterControl += 2;
+                if (boardState[sq+8] == 'P') whiteCenterControl += 2;
+            }
+            
+            // Direct occupation
+            if (boardState[sq] != ' ') {
+                if (isupper(boardState[sq])) whiteCenterControl += 3;
+                if (islower(boardState[sq])) blackCenterControl += 3;
+            }
+            
+            // Knight control
+            for (const auto& offset : std::vector<int>{-17, -15, -10, -6, 6, 10, 15, 17}) {
+                int pos = sq + offset;
+                if (pos >= 0 && pos < 64) {
+                    if (boardState[pos] == 'N') whiteCenterControl += 1;
+                    if (boardState[pos] == 'n') blackCenterControl += 1;
+                }
+            }
+        }
+        
+        // Award bonus for center control
+        score += (whiteCenterControl - blackCenterControl) * 5;
+        
+        // ----- DEVELOPMENT QUALITY -----
+        // Knights and bishops should be developed to good squares
+        
+        // Developed piece count
+        int whiteDevelopedPieces = 0;
+        int blackDevelopedPieces = 0;
+        
+        // Penalize specific bad piece placements
+        
+        // Knights should not be on edges in opening
+        for (int i = 0; i < 64; i++) {
+            int file = i % 8;
+            if (file == 0 || file == 7) { // a or h file
+                if (boardState[i] == 'N') score -= 40;
+                if (boardState[i] == 'n') score += 40;
+            }
+        }
+        
+        // Count developed minor pieces
+        if (boardState[62] != 'N') whiteDevelopedPieces++;
+        if (boardState[57] != 'N') whiteDevelopedPieces++;
+        if (boardState[61] != 'B') whiteDevelopedPieces++;
+        if (boardState[58] != 'B') whiteDevelopedPieces++;
+        
+        if (boardState[1] != 'n') blackDevelopedPieces++;
+        if (boardState[6] != 'n') blackDevelopedPieces++;
+        if (boardState[2] != 'b') blackDevelopedPieces++;
+        if (boardState[5] != 'b') blackDevelopedPieces++;
+        
+        // Reward development
+        score += whiteDevelopedPieces * 15;
+        score -= blackDevelopedPieces * 15;
+        
+        // ----- CASTLING AND KING SAFETY -----
+        // Kingside castling is generally preferred in opening
+        
+        // Check for castled kings
+        bool whiteKingsideCastled = (boardState[62] == 'K' && boardState[61] == 'R');
+        bool blackKingsideCastled = (boardState[6] == 'k' && boardState[5] == 'r');
+        
+        if (whiteKingsideCastled) score += 50;
+        if (blackKingsideCastled) score -= 50;
+    }
+    
+    return score;
 }
 
 extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistoryStr, int maxDepth, bool isWhite)
@@ -1449,15 +2336,15 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
         entry = TTEntry();
     }
 
-    // Generate all possible moves
-    std::vector<Move> allMoves = GenerateMoves(currentPosition, !currentPosition.whiteToMove);
+    // Generate moves for the CURRENT player
+    std::vector<Move> allMoves = GenerateMoves(currentPosition, currentPosition.whiteToMove);
 
     // Filter out illegal moves that would leave the king in check
     std::vector<Move> legalMoves;
     for (const Move& move : allMoves) {
         BoardPosition newPosition = ApplyMove(currentPosition, move);
         // Make sure the move doesn't leave the king in check
-        if (!IsKingInCheck(newPosition, !currentPosition.whiteToMove)) {
+        if (!IsKingInCheck(newPosition, currentPosition.whiteToMove)) {
             legalMoves.push_back(move);
         }
     }
@@ -1468,21 +2355,200 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
         return noMoveResult.c_str();
     }
 
+    // ----- OPENING MOVE FILTERING -----
+    // Only apply to first few moves (opening phase)
+    if (currentPosition.fullMoveNumber <= 4) {
+        std::cout << "Applying opening move filters..." << std::endl;
+        
+        // Store initial move count to check if we filtered any moves
+        int initialMoveCount = legalMoves.size();
+        
+        // Filter out known bad opening moves
+        for (auto it = legalMoves.begin(); it != legalMoves.end();) {
+            bool removeBadMove = false;
+            
+            // WHITE BAD MOVES
+            if (currentPosition.whiteToMove) {
+                // a2-a3 (P4840)
+                if (it->notation == "P4840") {
+                    std::cout << "Filtering out a2a3" << std::endl;
+                    removeBadMove = true;
+                }
+                // h2-h3 (P5547)
+                else if (it->notation == "P5547") {
+                    std::cout << "Filtering out h2h3" << std::endl;
+                    removeBadMove = true;
+                }
+                // Knight to edge files (a or h)
+                else if (it->notation[0] == 'N') {
+                    int endPos = std::stoi(it->notation.substr(3, 2));
+                    int file = endPos % 8;
+                    if (file == 0 || file == 7) { // Knight on a-file or h-file
+                        std::cout << "Filtering out knight move to edge: " << it->notation << std::endl;
+                        removeBadMove = true;
+                    }
+                }
+            }
+            // BLACK BAD MOVES
+            else {
+                // Na6 (n0116) after e4
+                if (it->notation == "n0116" && 
+                    (moveHistory == "e2e4" || moveHistory == "e4")) {
+                    std::cout << "Filtering out Na6 response to e4" << std::endl;
+                    removeBadMove = true;
+                }
+                // Nh6 (n0623) after e4
+                else if (it->notation == "n0623" && 
+                    (moveHistory == "e2e4" || moveHistory == "e4")) {
+                    std::cout << "Filtering out Nh6 response to e4" << std::endl;
+                    removeBadMove = true;
+                }
+                // Edge knights in general
+                else if (it->notation[0] == 'n') {
+                    int endPos = std::stoi(it->notation.substr(3, 2));
+                    int file = endPos % 8;
+                    if (file == 0 || file == 7) { // Knight on a-file or h-file
+                        std::cout << "Filtering out knight move to edge: " << it->notation << std::endl;
+                        removeBadMove = true;
+                    }
+                }
+            }
+            
+            // Remove the move if it's bad (but keep at least one legal move)
+            if (removeBadMove && legalMoves.size() > 1) {
+                it = legalMoves.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        
+        // Debug the remaining moves
+        std::cout << "Legal moves after filtering:" << std::endl;
+        for (const Move& move : legalMoves) {
+            std::cout << "  " << move.notation << " -> " 
+                      << ConvertToAlgebraic(move, currentPosition) << std::endl;
+        }
+        
+        // Verify we didn't filter ALL moves
+        if (legalMoves.empty() && initialMoveCount > 0) {
+            std::cout << "Warning: Filtered all moves, restoring legal ones" << std::endl;
+            // If we filtered everything, restore the best of the bad moves
+            legalMoves = allMoves;
+            // Just keep filtering illegal moves
+            for (auto it = legalMoves.begin(); it != legalMoves.end();) {
+                BoardPosition newPosition = ApplyMove(currentPosition, *it);
+                if (IsKingInCheck(newPosition, !currentPosition.whiteToMove)) {
+                    it = legalMoves.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        
+        // Secondary evaluation-based filtering
+        if (legalMoves.size() > 1) {
+            // Evaluate and filter based on opening principles scores
+            std::vector<std::pair<int, Move>> scoredMoves;
+            for (const Move& move : legalMoves) {
+                BoardPosition newPos = ApplyMove(currentPosition, move);
+
+                // Evaluate from the current player's perspective
+                newPos.whiteToMove = currentPosition.whiteToMove;
+                int score = EvaluateBoard(newPos);
+
+                // Negate scores for Black so higher is always better
+                if (!currentPosition.whiteToMove) {
+                    score = -score;
+                }
+                scoredMoves.push_back({score, move});
+                std::cout << "  Evaluated " << ConvertToAlgebraic(move, currentPosition) 
+                          << " = " << score << std::endl;
+            }
+
+            // Special case: First move by White - ensure classical opening moves are preferred
+            if (currentPosition.fullMoveNumber == 1 && currentPosition.whiteToMove) {
+                for (auto& scoreMove : scoredMoves) {
+                    std::string algebraic = ConvertToAlgebraic(scoreMove.second, currentPosition);
+                    if (algebraic == "e4" || algebraic == "e2e4") {
+                        scoreMove.first = 5000; // Override the score completely
+                        std::cout << "Boosting e4 to score 5000" << std::endl;
+                    }
+                    else if (algebraic == "d4" || algebraic == "d2d4") {
+                        scoreMove.first = 4800;
+                        std::cout << "Boosting d4 to score 4800" << std::endl;
+                    }
+                    else if (algebraic == "Nf3" || algebraic == "Ng1f3") {
+                        scoreMove.first = 4600;
+                        std::cout << "Boosting Nf3 to score 4600" << std::endl;
+                    }
+                }
+            }
+            
+            // Remove moves with extreme penalties
+            if (scoredMoves.size() > 1) {
+                auto cutoffIter = std::remove_if(scoredMoves.begin(), scoredMoves.end(), 
+                    [&currentPosition](const std::pair<int, Move>& scoredMove) {
+                        return (currentPosition.whiteToMove && scoredMove.first < -1000) || 
+                               (!currentPosition.whiteToMove && scoredMove.first < -1000);
+                    });
+                
+                // Only remove if we'll still have at least one move left
+                if (cutoffIter != scoredMoves.begin() && scoredMoves.end() - cutoffIter > 1) {
+                    scoredMoves.erase(cutoffIter, scoredMoves.end());
+                }
+            }
+            
+            // Sort moves by score (best first) - ALWAYS use descending order
+            std::sort(scoredMoves.begin(), scoredMoves.end(),
+                [](const auto& a, const auto& b) { return a.first > b.first; });
+            
+            // Only keep the top 50% of moves for search
+            int keepCount = customMax(1, (int)(scoredMoves.size() / 2));
+            if (scoredMoves.size() > keepCount) {
+                scoredMoves.resize(keepCount);
+            }
+            
+            // Convert back to move list
+            legalMoves.clear();
+            for (const auto& scoredMove : scoredMoves) {
+                legalMoves.push_back(scoredMove.second);
+            }
+        }
+    }
+
     // Iterative deepening - start from depth 1 and increase
     for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++) {
-        // Create the move tree from the current board position
-        MoveTreeNode* root = BuildMoveTree(currentPosition, 1, isWhite);
+        // Create root node manually with only filtered moves
+        MoveTreeNode* root = new MoveTreeNode(currentPosition.boardState);
+        
+        // Add only the filtered legal moves as children
+        for (const Move& move : legalMoves) {
+            BoardPosition newPosition = ApplyMove(currentPosition, move);
+            MoveTreeNode* child = new MoveTreeNode(newPosition.boardState, move, root);
+            
+            // If this isn't the last depth, expand the children of this move
+            if (currentDepth > 1) {
+                ExpandNode(child, currentDepth-1, !currentPosition.whiteToMove, newPosition);
+            }
+            
+            root->children.push_back(child);
+        }
 
-        // Find the best move using minimax on the tree at current depth
-        int bestValue = -2147483647;
+        // Find the best move using minimax - ALWAYS MAXIMIZE for both sides since we normalized scores
+        int bestValue = -2147483647; // Initialize to very low value for both players
         Move currentBestMove;
         bool moveFound = false;
 
-        // Only search root children (our moves)
+        // Search all filtered root children
         for (MoveTreeNode* childNode : root->children) {
-            // Use a full-window search for all moves at the root
-            int moveValue = -MinimaxOnTree(childNode, currentDepth - 1, -2147483647, -bestValue, !isWhite);
-
+            int moveValue;
+            if (currentPosition.whiteToMove) {
+                moveValue = -MinimaxOnTree(childNode, currentDepth - 1, -2147483647, -bestValue, false);
+            } else {
+                moveValue = -MinimaxOnTree(childNode, currentDepth - 1, -bestValue, 2147483647, true);
+            }
+            
+            // For both players, higher score is better (after our normalization)
             if (moveValue > bestValue) {
                 bestValue = moveValue;
                 currentBestMove = childNode->move;
@@ -1513,6 +2579,10 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
 
     static std::string result;
     result = ConvertToAlgebraic(bestMove, currentPosition);
+    
+    // Final debug output
+    std::cout << "Selected move: " << result << std::endl;
+    
     return result.c_str();
 }
 
@@ -1540,7 +2610,34 @@ void PrintMoveTree(MoveTreeNode* node, int depth = 0) {
     }
 }
 
-/*
+// Add this to main() or in a separate test function
+void DebugOpeningMoves() {
+    // Test a3 position detection
+    BoardPosition testPos;
+    testPos.boardState = "rnbqkbnrpppppppp                                PPPPPPPPR BQKBNR";
+    testPos.boardState[48] = ' '; // Empty a2
+    testPos.boardState[40] = 'P'; // Pawn at a3
+    testPos.whiteToMove = true;
+    testPos.fullMoveNumber = 1;
+    
+    std::cout << "a3 evaluation: " << EvaluateOpeningPrinciples(testPos) << std::endl;
+    
+    // Test e4 position
+    BoardPosition e4Pos;
+    e4Pos.boardState = "rnbqkbnrpppppppp                P               PPP PPPPRNBQKBNR";
+    e4Pos.whiteToMove = false;
+    e4Pos.fullMoveNumber = 1;
+    
+    std::cout << "Position after e4: " << EvaluateOpeningPrinciples(e4Pos) << std::endl;
+    
+    // Test Na6 after e4
+    BoardPosition na6Pos = e4Pos;
+    na6Pos.boardState[1] = ' '; // Knight moved from b8
+    na6Pos.boardState[16] = 'n'; // Knight at a6
+    
+    std::cout << "Na6 after e4 evaluation: " << EvaluateOpeningPrinciples(na6Pos) << std::endl;
+}
+
 int main() {
     // Test 1: Generate moves for the starting position
     BoardPosition startPosition;
@@ -1568,10 +2665,12 @@ int main() {
     std::cout << "Best move for white at depth 3: " << bestMove << std::endl;
 
     // Test 4: Get best move after a couple of moves (e4 Nb8a6 d2d4)
-    const char* moveHistory = "e2e4 Nb8a6 d2d4";
+    const char* moveHistory = "e2e4";
     const char* bestMoveAfter = GetBestMove(moveHistory, 3, false); // Black to move
     std::cout << "Best move for black: " << bestMoveAfter << std::endl;
 
+    std::cout<< "Debugging opening moves..." << std::endl;
+    DebugOpeningMoves();
+
     return 0;
 }
-*/
