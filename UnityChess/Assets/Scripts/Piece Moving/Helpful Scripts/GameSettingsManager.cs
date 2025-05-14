@@ -44,7 +44,7 @@ namespace Piece_Moving.Helpful_Scripts
     
         public void StartGame()
         {
-            SceneManager.LoadScene("ChessGame"); // Load your main chess scene
+            SceneManager.LoadScene("TwoPlayers"); // Load your main chess scene
         }
     }
 }

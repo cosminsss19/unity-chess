@@ -1,2 +1,9 @@
-﻿     Creating library C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.lib and object C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.exp
-  ChessEngine.vcxproj -> C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.exe
+﻿  ChessEngine.cpp
+C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(740,23): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
+  (compiling source file '/ChessEngine.cpp')
+  
+C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(1166,17): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
+  (compiling source file '/ChessEngine.cpp')
+  
+     Creating library C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.lib and object C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.exp
+  ChessEngine.vcxproj -> C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.dll

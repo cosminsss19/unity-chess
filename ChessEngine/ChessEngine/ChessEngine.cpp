@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <limits>
+#include <sstream>
 #include <algorithm>
 #include <chrono>
 
@@ -61,6 +62,18 @@ struct MoveTreeNode {
     }
 };
 
+struct BoardPosition {
+    std::string boardState; // The 64-character board representation
+    bool whiteCanCastleKingside;
+    bool whiteCanCastleQueenside;
+    bool blackCanCastleKingside;
+    bool blackCanCastleQueenside;
+    int enPassantTargetSquare; // -1 if none
+    int halfMoveClock; // For 50-move rule
+    int fullMoveNumber;
+    bool whiteToMove;
+};
+
 // Constants for the transposition table flags
 const int TT_EXACT = 0;      // Exact score
 const int TT_ALPHA = 1;      // Upper bound
@@ -70,6 +83,7 @@ const int TT_BETA = 2;       // Lower bound
 const int MAX_PLY = 64;  // Maximum search depth
 Move killerMoves[MAX_PLY][2] = {};  // Initialize to empty moves
 
+// ---------------------------- Start of Function declarations ---------------------------- \\
 void StoreKillerMove(const Move& move, int ply);
 bool IsKiller(const Move& move, int ply);
 uint64_t GetZobristKey(const std::string& boardState);
@@ -104,7 +118,11 @@ void GenerateRookMoves(const std::string& boardState, int row, int col, int pos,
 void GenerateKingMoves(const std::string& boardState, int row, int col, int pos,
     bool isWhite, std::vector<Move>& moves);
 int EvaluateBoard(const std::string& boardState);
-
+BoardPosition ParseMoveHistory(const std::string& moveHistory);
+BoardPosition ApplyAlgebraicMove(const BoardPosition& position, const std::string& algebraicMove);
+int AlgebraicToIndex(const std::string& algebraic);
+std::string IndexToAlgebraic(int index);
+// ---------------------------- End of Function declarations ---------------------------- \\
 
 // Store a killer move
 void StoreKillerMove(const Move& move, int ply) {
@@ -308,39 +326,54 @@ int GetPieceValue(char piece) {
 int Quiescence(const std::string& boardState, int alpha, int beta, bool maximizingPlayer, int maxDepth) {
     // Base evaluation
     int standPat = EvaluateBoard(boardState);
-    
+
     // Return immediately if we've reached maximum quiescence depth
     if (maxDepth <= 0) {
         return standPat;
     }
-    
+
     // Beta cutoff
     if (standPat >= beta) {
         return beta;
     }
-    
+
     // Update alpha
     if (alpha < standPat) {
         alpha = standPat;
     }
-    
+
     // Generate only capture moves
     std::vector<Move> captureMoves;
     std::vector<Move> allMoves = GenerateMoves(boardState, maximizingPlayer);
-    
+
     // Filter to only keep captures
     for (const Move& move : allMoves) {
-        int endPos = std::stoi(move.notation.substr(move.notation.length() - 2));
-        if (boardState[endPos] != ' ' || move.isEnPassant) {
-            captureMoves.push_back(move);
+        try {
+            if (move.notation.length() < 3) {
+                continue; // Skip invalid moves instead of throwing
+            }
+    
+            int endPos = std::stoi(move.notation.substr(move.notation.length() - 2));
+            if (endPos < 0 || endPos >= boardState.size()) {
+                continue; // Skip out-of-range positions
+            }
+    
+            if (boardState[endPos] != ' ' || move.isEnPassant) {
+                captureMoves.push_back(move);
+            }
+        }
+        catch (const std::exception& e) {
+            // Log the error and continue
+            std::cerr << "Error processing move: " << move.notation << " - " << e.what() << std::endl;
+            continue;
         }
     }
-    
+
     // If no captures are available, return the stand pat score
     if (captureMoves.empty()) {
         return standPat;
     }
-    
+
     // Recursively search capture sequences
     if (maximizingPlayer) {
         for (const Move& move : captureMoves) {
@@ -370,7 +403,6 @@ int Quiescence(const std::string& boardState, int alpha, int beta, bool maximizi
 }
 
 // Enhanced MinimaxOnTree with move ordering and quiescence search
-// Enhanced MinimaxOnTree with null move pruning
 int MinimaxOnTree(MoveTreeNode* node, int depth, int alpha, int beta, bool maximizingPlayer, bool allowNullMove) {
     // If node is already evaluated, return its score
     if (node->isEvaluated) {
@@ -614,28 +646,60 @@ int EvaluateBoard(const std::string& boardState);
 
 // Apply a move to the board and return the new board state
 std::string ApplyMove(const std::string& boardState, const Move& move) {
-    std::string newBoardState = boardState;
+    if (move.notation.empty()) {
+        throw std::invalid_argument("Empty move notation");
+    }
     
+    if (move.notation.length() < 3) {
+        throw std::invalid_argument("Invalid move notation: " + move.notation);
+    }
+
+    std::string newBoardState = boardState;
+
     // Parse the move notation - format is [piece][startPos][endPos]
     char piece = move.notation[0];
-    int startPos = std::stoi(move.notation.substr(1, move.notation.length() - 3));
-    int endPos = std::stoi(move.notation.substr(move.notation.length() - 2));
+    std::string startPosStr;
+    std::string endPosStr;
+
+    if (move.notation.length() == 3) {
+        // For 3-char notations: piece (1) + startPos (1) + endPos (1)
+        startPosStr = move.notation.substr(1, 1);
+        endPosStr = move.notation.substr(2, 1);
+    } else {
+        // For longer notations
+        startPosStr = move.notation.substr(1, move.notation.length() - 3);
+        endPosStr = move.notation.substr(move.notation.length() - 2);
+    }
+
+    if (startPosStr.empty() || endPosStr.empty() ||
+        !std::all_of(startPosStr.begin(), startPosStr.end(), ::isdigit) ||
+        !std::all_of(endPosStr.begin(), endPosStr.end(), ::isdigit)) {
+        throw std::invalid_argument("Invalid position format in move: " + move.notation);
+    }
     
+    int startPos = std::stoi(startPosStr);
+    int endPos = std::stoi(endPosStr);
+    
+
+    if (startPos < 0 || startPos >= boardState.size() || endPos < 0 || endPos >= boardState.size()) {
+        throw std::out_of_range("Move indices out of range: " + move.notation);
+    }
+
     // Move the piece
     newBoardState[endPos] = piece;
     newBoardState[startPos] = ' ';
-    
+
     // Handle en passant capture
     if (move.isEnPassant) {
         newBoardState[move.enPassantCapturePos] = ' ';  // Remove the captured pawn
     }
-    
+
     // Handle castling
     if (move.isCastling) {
         const int BOARD_SIZE = 8;
         int row = startPos / BOARD_SIZE;
         int kingStartCol = startPos % BOARD_SIZE; // Should be 4
-        
+
         if (move.isKingsideCastling) {
             // Move the rook from h-file (7) to f-file (5)
             int rookStartPos = row * BOARD_SIZE + 7;
@@ -652,17 +716,17 @@ std::string ApplyMove(const std::string& boardState, const Move& move) {
             newBoardState[rookStartPos] = ' ';
         }
     }
-    
+
     // Handle pawn promotion
     const int BOARD_SIZE = 8;
     int row = endPos / BOARD_SIZE;
-    
+
     // Check if pawn reached the end of the board
     if ((piece == 'P' && row == 0) || (piece == 'p' && row == 7)) {
         // Promote to queen by default
         newBoardState[endPos] = (piece == 'P') ? 'Q' : 'q';
     }
-    
+
     return newBoardState;
 }
 
@@ -813,7 +877,10 @@ bool IsValidMove(const std::string& boardState, int row, int col, bool isWhite) 
 // Add a valid move to the list
 void AddMove(const std::string& boardState, int startPos, int endPos, char piece, 
              std::vector<Move>& moves) {
-    std::string notation = piece + std::to_string(startPos) + std::to_string(endPos);
+    std::string startPosStr = (startPos < 10) ? "0" + std::to_string(startPos) : std::to_string(startPos);
+    std::string endPosStr = (endPos < 10) ? "0" + std::to_string(endPos) : std::to_string(endPos);
+    
+    std::string notation = piece + startPosStr + endPosStr;
     moves.push_back({notation});
 }
 
@@ -1165,11 +1232,173 @@ int EvaluateBoard(const std::string& boardState) {
     return score;
 }
 
+BoardPosition ParseMoveHistory(const std::string& moveHistory) {
+    // Start with initial position
+    BoardPosition position;
+    position.boardState = "rnbqkbnrpppppppp                                PPPPPPPPRNBQKBNR";
+    position.whiteCanCastleKingside = true;
+    position.whiteCanCastleQueenside = true;
+    position.blackCanCastleKingside = true;
+    position.blackCanCastleQueenside = true;
+    position.enPassantTargetSquare = -1;
+    position.halfMoveClock = 0;
+    position.fullMoveNumber = 1;
+    position.whiteToMove = true;
+    
+    if (moveHistory.empty()) {
+        return position;
+    }
+    
+    // Split move history into individual moves
+    std::vector<std::string> moves;
+    std::istringstream moveStream(moveHistory);
+    std::string moveStr;
+    while (moveStream >> moveStr) {
+        moves.push_back(moveStr);
+    }
+    
+    // Apply each move to update the position
+    for (const std::string& move : moves) {
+        position = ApplyAlgebraicMove(position, move);
+    }
+    
+    return position;
+}
 
+BoardPosition ApplyAlgebraicMove(const BoardPosition& position, const std::string& algebraicMove) {
+    BoardPosition newPosition = position;
+    
+    // Check for castling
+    if (algebraicMove == "O-O") {
+        // Kingside castling
+        if (position.whiteToMove) {
+            // Update the board state for white kingside castling
+            // Update castling rights
+            newPosition.whiteCanCastleKingside = false;
+            newPosition.whiteCanCastleQueenside = false;
+        } else {
+            // Update the board state for black kingside castling
+            // Update castling rights
+            newPosition.blackCanCastleKingside = false;
+            newPosition.blackCanCastleQueenside = false;
+        }
+    } else if (algebraicMove == "O-O-O") {
+        // Queenside castling
+        // Similar implementation
+    } else {
+        // Regular move
+        char piece = 'P'; // Default to pawn
+        std::string from, to;
+        bool isCapture = false;
+        
+        // Parse the algebraic move
+        int index = 0;
+        if (isupper(algebraicMove[0]) && !isdigit(algebraicMove[1])) {
+            piece = algebraicMove[0];
+            index = 1;
+        }
+        
+        // Extract from and to squares
+        from = algebraicMove.substr(index, 2);
+        
+        // Check for capture
+        if (algebraicMove.find('x') != std::string::npos) {
+            isCapture = true;
+            to = algebraicMove.substr(algebraicMove.find('x') + 1, 2);
+        } else {
+            to = algebraicMove.substr(from.length() + index, 2);
+        }
+        
+        // Convert from algebraic coordinates to board indices
+        int fromIndex = AlgebraicToIndex(from);
+        int toIndex = AlgebraicToIndex(to);
+        
+        // Update the board state
+        newPosition.boardState[toIndex] = newPosition.boardState[fromIndex];
+        newPosition.boardState[fromIndex] = ' ';
+        
+        // Update castling rights if king or rook moves
+        if (piece == 'K') {
+            if (position.whiteToMove) {
+                newPosition.whiteCanCastleKingside = false;
+                newPosition.whiteCanCastleQueenside = false;
+            } else {
+                newPosition.blackCanCastleKingside = false;
+                newPosition.blackCanCastleQueenside = false;
+            }
+        } else if (piece == 'R') {
+            // Update rook-specific castling rights
+        }
+        
+        // Handle en passant
+        // Handle pawn promotion
+    }
+    
+    newPosition.whiteToMove = !position.whiteToMove;
+    newPosition.fullMoveNumber += position.whiteToMove ? 1 : 0;
+    
+    return newPosition;
+}
 
-extern "C" __declspec(dllexport) const char* GetBestMove(const char* boardState, int maxDepth, bool isWhite)
+int AlgebraicToIndex(const std::string& algebraic) {
+    int file = algebraic[0] - 'a';
+    int rank = 8 - (algebraic[1] - '0');
+    return rank * 8 + file;
+}
+
+std::string ConvertToAlgebraic(const Move& move, const BoardPosition& position) {
+    // Convert from your internal move representation to algebraic notation
+    // Example: "P4840" → "a2a3" or "e4"
+    
+    // Extract start and end positions
+    int startPos = std::stoi(move.notation.substr(1, move.notation.length() - 3));
+    int endPos = std::stoi(move.notation.substr(move.notation.length() - 2));
+    
+    // Convert to algebraic coordinates
+    std::string startSquare = IndexToAlgebraic(startPos);
+    std::string endSquare = IndexToAlgebraic(endPos);
+    
+    char piece = move.notation[0];
+    bool isCapture = position.boardState[endPos] != ' ' || move.isEnPassant;
+    
+    // Build the algebraic notation
+    std::string algebraic;
+    
+    // Add piece letter (except for pawns)
+    if (piece != 'P' && piece != 'p') {
+        algebraic += toupper(piece);
+    }
+    
+    // Add the move coordinates
+    algebraic += startSquare;
+    
+    // Add capture symbol if needed
+    if (isCapture) {
+        algebraic += 'x';
+    }
+    
+    algebraic += endSquare;
+    
+    // Handle special cases like castling, promotion, etc.
+    
+    return algebraic;
+}
+
+std::string IndexToAlgebraic(int index) {
+    int rank = 8 - (index / 8);
+    int file = index % 8;
+    
+    std::string result;
+    result += 'a' + file;
+    result += '0' + rank;
+    
+    return result;
+}
+
+extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistoryStr, int maxDepth, bool isWhite)
 {
-    std::string board(boardState);
+    std::string moveHistory(moveHistoryStr);
+    BoardPosition currentPosition = ParseMoveHistory(moveHistory);
     Move bestMove;
     
     // Starting time for time management
@@ -1184,7 +1413,7 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* boardState,
     // Iterative deepening - start from depth 1 and increase
     for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++) {
         // Create the move tree from the current board position
-        MoveTreeNode* root = BuildMoveTree(board, 1, isWhite);
+        MoveTreeNode* root = BuildMoveTree(currentPosition.boardState, 1, isWhite);
         
         // Find the best move using minimax on the tree at current depth
         int bestValue = -2147483647;
@@ -1224,8 +1453,7 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* boardState,
         }
     }
 
-    static std::string result;
-    result = bestMove.notation;
+    static std::string result = ConvertToAlgebraic(bestMove, currentPosition);
     return result.c_str();
 }
 
@@ -1251,15 +1479,4 @@ void PrintMoveTree(MoveTreeNode* node, int depth = 0) {
     for (MoveTreeNode* child : node->children) {
         PrintMoveTree(child, depth + 1);
     }
-}
-
-int main() {
-    const char* boardState = "rnbqkbnrpppppppp                                PPPPPPPPRNBQKBNR";
-    int maxDepth = 3;
-    bool isWhite = true;
-
-    const char* bestMove = GetBestMove(boardState, maxDepth, isWhite);
-    std::cout << "Best Move: " << bestMove << std::endl;
-
-    return 0;
 }

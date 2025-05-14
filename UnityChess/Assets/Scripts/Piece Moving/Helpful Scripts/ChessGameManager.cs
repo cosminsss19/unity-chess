@@ -62,7 +62,7 @@ public class ChessGameManager : MonoBehaviour
     [SerializeField] private AudioClip pieceMoveSound;
     
     [DllImport("ChessEngine")]
-    private static extern IntPtr GetBestMove(string movesHistory, int depth);
+    private static extern IntPtr GetBestMove(string movesHistory, int depth, bool isWhite);
     private List<string> moveHistory = new List<string>();
     
     [SerializeField] private bool playAgainstComputer = true;
@@ -89,7 +89,7 @@ public class ChessGameManager : MonoBehaviour
 
         string moves = string.Join(" ", moveHistory);
         int depth = 3; // Example depth
-        IntPtr bestMovePtr = GetBestMove(moves, depth);
+        IntPtr bestMovePtr = GetBestMove(moves, depth, !computerPlaysBlack);
         string bestMove = Marshal.PtrToStringAnsi(bestMovePtr);
         Debug.Log("Best Move: " + bestMove);
         if (playAgainstComputer && !computerPlaysBlack)
@@ -97,6 +97,27 @@ public class ChessGameManager : MonoBehaviour
             StartCoroutine(MakeComputerMove());
         }
         
+    }
+    private void LogMoveHistory()
+    {
+        if (moveHistory.Count > 0)
+        {
+            int moveNumber = (moveHistory.Count + 1) / 2;
+            string lastMove = moveHistory[moveHistory.Count - 1];
+            bool isWhiteMove = moveHistory.Count % 2 == 1;
+            string playerColor = isWhiteMove ? "White" : "Black";
+
+            // Special cases: castling and promotion are already handled correctly
+            if (lastMove == "O-O" || lastMove == "O-O-O" || 
+                (lastMove.Length >= 5 && lastMove.Contains("=")))
+            {
+                Debug.Log($"Move {moveNumber}{(isWhiteMove ? "." : "...")} {playerColor}: {lastMove}");
+                return;
+            }
+
+            // For regular moves, we already have piece notation in the format we want
+            Debug.Log($"Move {moveNumber}{(isWhiteMove ? "." : "...")} {playerColor}: {lastMove}");
+        }
     }
     private async Task StartFunction()
     {
@@ -455,6 +476,7 @@ public class ChessGameManager : MonoBehaviour
 
         string moveNotation = GetMoveNotation(oldPos, targetPos);
         moveHistory.Add(moveNotation);
+        LogMoveHistory(); 
         
         // Reset En Passant for all pawns of current player
         foreach (var item in _pieces.Values)
@@ -560,13 +582,51 @@ public class ChessGameManager : MonoBehaviour
 
     private string GetMoveNotation(Vector2Int from, Vector2Int to)
     {
-        // Convert board coordinates to chess notation (a1, h8, etc.)
-        char fromFile = (char)('a' + from.y);
-        char toFile = (char)('a' + to.y);
-        int fromRank = from.x + 1;
-        int toRank = to.x + 1;
+        // Get the moving piece
+        ChessPiece piece = _pieces[from].GetComponent<ChessPiece>();
     
-        return $"{fromFile}{fromRank}{toFile}{toRank}";
+        // Check for castling
+        if (piece is King && Mathf.Abs(to.y - from.y) == 2)
+        {
+            // Kingside castling
+            if (to.y > from.y)
+                return "O-O";
+            // Queenside castling
+            else
+                return "O-O-O";
+        }
+    
+        // Get piece character
+        string pieceChar = GetPieceNotationChar(piece);
+    
+        // Convert board coordinates to chess notation
+        string fromSquare = PositionToChessNotation(from);
+        string toSquare = PositionToChessNotation(to);
+    
+        // Check for capture
+        bool isCapture = _pieces.ContainsKey(to);
+        string captureSymbol = isCapture ? "x" : "";
+    
+        // Build notation
+        return $"{pieceChar}{fromSquare}{captureSymbol}{toSquare}";
+    }
+
+    private string GetPieceNotationChar(ChessPiece piece)
+    {
+        if (piece is King) return "K";
+        if (piece is Queen) return "Q";
+        if (piece is Rook) return "R";
+        if (piece is Bishop) return "B";
+        if (piece is Knight) return "N";
+        if (piece is Pawn) return "";
+        return "?";
+    }
+
+    private string PositionToChessNotation(Vector2Int pos)
+    {
+        char file = (char)('a' + pos.y);
+        int rank = pos.x + 1;
+        return $"{file}{rank}";
     }
     
     private void RecordPromotion(string pieceType)
@@ -809,58 +869,136 @@ public class ChessGameManager : MonoBehaviour
         selectedPiece = null;
         ClearHighlights();
         
-        if (playAgainstComputer && isWhiteTurn != computerPlaysBlack)
+        if (playAgainstComputer && ((isWhiteTurn && !computerPlaysBlack) || (!isWhiteTurn && computerPlaysBlack)))
         {
             StartCoroutine(MakeComputerMove());
         }
     }
     
     private IEnumerator MakeComputerMove()
+{
+    // Wait a short delay before making the computer move
+    yield return new WaitForSeconds(0.5f);
+
+    // Convert move history list to space-separated string format for the DLL
+    string moves = string.Join(" ", moveHistory);
+    Debug.Log($"Sending moves to engine: {moves}");
+
+    bool computerIsWhite = !computerPlaysBlack;
+    
+    // Request best move from engine
+    IntPtr bestMovePtr = GetBestMove(moves, computerSearchDepth, computerIsWhite);
+    string bestMove = Marshal.PtrToStringAnsi(bestMovePtr);
+
+    if (string.IsNullOrEmpty(bestMove))
     {
-        // Wait a short delay before making the computer move
-        yield return new WaitForSeconds(0.5f);
-    
-        // Request best move from engine
-        string moves = string.Join(" ", moveHistory);
-        IntPtr bestMovePtr = GetBestMove(moves, computerSearchDepth);
-        string bestMove = Marshal.PtrToStringAnsi(bestMovePtr);
-    
-        if (string.IsNullOrEmpty(bestMove))
-        {
-            Debug.LogError("Engine returned null or empty move");
-            yield break;
-        }
-    
-        Debug.Log("Computer plays: " + bestMove);
-        ExecuteUciMove(bestMove);
+        Debug.LogError("Engine returned null or empty move");
+        yield break;
     }
+
+    Debug.Log("Computer plays: " + bestMove);
+    
+    string cleanMove = bestMove;
+    if (bestMove.Length > 0 && char.IsUpper(bestMove[0]) &&
+        "NBRQK".Contains(bestMove[0]))
+    {
+        cleanMove = bestMove.Substring(1);
+    }
+    
+    // Parse the move coordinates
+    if (cleanMove.Length < 4) yield break;
+    
+    char fromFileChar = bestMove[0];
+    char fromRankChar = bestMove[1];
+    char toFileChar = bestMove[2];
+    char toRankChar = bestMove[3];
+
+    // Convert to board coordinates
+    int fromFile = fromFileChar - 'a';
+    int fromRank = fromRankChar - '1';
+    int toFile = toFileChar - 'a';
+    int toRank = toRankChar - '1';
+
+    // Convert to Vector2Int
+    Vector2Int fromPos = new Vector2Int(fromRank, fromFile);
+    Vector2Int toPos = new Vector2Int(toRank, toFile);
+
+    // Highlight the from position first
+    foreach (var tile in _tiles.Values)
+    {
+        ChessTile tileScript = tile.GetComponent<ChessTile>();
+        if (tileScript.tilePos == fromPos)
+        {
+            var rendererMesh = tile.GetComponentInChildren<MeshRenderer>();
+            if (rendererMesh != null)
+                rendererMesh.material = highlightMaterial;
+        }
+    }
+
+    // Wait a moment to show the from square
+    yield return new WaitForSeconds(0.3f);
+    
+    // Highlight the to position
+    foreach (var tile in _tiles.Values)
+    {
+        ChessTile tileScript = tile.GetComponent<ChessTile>();
+        if (tileScript.tilePos == toPos)
+        {
+            var rendererMesh = tile.GetComponentInChildren<MeshRenderer>();
+            if (rendererMesh != null)
+                rendererMesh.material = highlightMaterial;
+        }
+    }
+    
+    // Wait a moment for visual clarity
+    yield return new WaitForSeconds(0.2f);
+
+    // Execute the move like a player would
+    ExecuteUciMove(bestMove);
+    
+    // Clear highlights after the move
+    yield return new WaitForSeconds(0.2f);
+    ClearHighlights();
+}
 
     public void ReturnToMenu()
     {
         SceneManager.LoadScene("GameModeSelection");
     }
-    
+
     private void ExecuteUciMove(string uciMove)
     {
-        // UCI moves are in the format "e2e4" or "e7e8q" for promotion
-        if (uciMove.Length < 4) return;
-    
+        // Remove any piece identifier if present (like N, B, R, Q, K)
+        string cleanMove = uciMove;
+        if (uciMove.Length > 0 && char.IsUpper(uciMove[0]) &&
+            "NBRQK".Contains(uciMove[0]))
+        {
+            cleanMove = uciMove.Substring(1);
+        }
+
+        // Make sure we have at least 4 characters for a move
+        if (cleanMove.Length < 4)
+        {
+            Debug.LogError($"Invalid move format: {uciMove}");
+            return;
+        }
+
         // Parse the move coordinates
-        char fromFileChar = uciMove[0];
-        char fromRankChar = uciMove[1];
-        char toFileChar = uciMove[2];
-        char toRankChar = uciMove[3];
-    
+        char fromFileChar = cleanMove[0];
+        char fromRankChar = cleanMove[1];
+        char toFileChar = cleanMove[2];
+        char toRankChar = cleanMove[3];
+
         // Convert to board coordinates
         int fromFile = fromFileChar - 'a';
         int fromRank = fromRankChar - '1';
         int toFile = toFileChar - 'a';
         int toRank = toRankChar - '1';
-    
-        // Convert to Vector2Int (our coordinates are [rank,file])
+
+        // Convert to Vector2Int
         Vector2Int fromPos = new Vector2Int(fromRank, fromFile);
         Vector2Int toPos = new Vector2Int(toRank, toFile);
-    
+
         // Find the piece at the from position
         if (_pieces.TryGetValue(fromPos, out GameObject pieceObj))
         {
@@ -869,15 +1007,15 @@ public class ChessGameManager : MonoBehaviour
             {
                 // Store promotion type if present
                 string promotionType = null;
-                if (uciMove.Length > 4)
+                if (cleanMove.Length > 4)
                 {
-                    char promotionChar = uciMove[4];
+                    char promotionChar = cleanMove[4];
                     promotionType = GetPromotionTypeFromChar(promotionChar);
                 }
-            
+
                 // Execute the move
                 MovePiece(piece, toPos);
-            
+
                 // Handle promotion separately if needed
                 if (promotionType != null && _isWaitingForPromotion)
                 {
@@ -887,10 +1025,10 @@ public class ChessGameManager : MonoBehaviour
         }
         else
         {
-            Debug.LogError($"No piece found at position {fromPos}");
+            Debug.LogError($"No piece found at position {fromPos} for move {uciMove}");
         }
     }
-    
+
     private string GetPromotionTypeFromChar(char c)
     {
         switch (char.ToLower(c))
