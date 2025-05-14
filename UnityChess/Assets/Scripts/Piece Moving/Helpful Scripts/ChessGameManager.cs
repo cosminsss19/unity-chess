@@ -876,90 +876,90 @@ public class ChessGameManager : MonoBehaviour
     }
     
     private IEnumerator MakeComputerMove()
-{
-    // Wait a short delay before making the computer move
-    yield return new WaitForSeconds(0.5f);
-
-    // Convert move history list to space-separated string format for the DLL
-    string moves = string.Join(" ", moveHistory);
-    Debug.Log($"Sending moves to engine: {moves}");
-
-    bool computerIsWhite = !computerPlaysBlack;
-    
-    // Request best move from engine
-    IntPtr bestMovePtr = GetBestMove(moves, computerSearchDepth, computerIsWhite);
-    string bestMove = Marshal.PtrToStringAnsi(bestMovePtr);
-
-    if (string.IsNullOrEmpty(bestMove))
     {
-        Debug.LogError("Engine returned null or empty move");
-        yield break;
-    }
+        // Wait a short delay before making the computer move
+        yield return new WaitForSeconds(0.5f);
 
-    Debug.Log("Computer plays: " + bestMove);
+        // Convert move history list to space-separated string format for the DLL
+        string moves = string.Join(" ", moveHistory);
+        Debug.Log($"Sending moves to engine: {moves}");
+
+        bool computerIsWhite = !computerPlaysBlack;
     
-    string cleanMove = bestMove;
-    if (bestMove.Length > 0 && char.IsUpper(bestMove[0]) &&
-        "NBRQK".Contains(bestMove[0]))
-    {
-        cleanMove = bestMove.Substring(1);
-    }
-    
-    // Parse the move coordinates
-    if (cleanMove.Length < 4) yield break;
-    
-    char fromFileChar = bestMove[0];
-    char fromRankChar = bestMove[1];
-    char toFileChar = bestMove[2];
-    char toRankChar = bestMove[3];
+        // Request best move from engine
+        IntPtr bestMovePtr = GetBestMove(moves, computerSearchDepth, computerIsWhite);
+        string bestMove = Marshal.PtrToStringAnsi(bestMovePtr);
 
-    // Convert to board coordinates
-    int fromFile = fromFileChar - 'a';
-    int fromRank = fromRankChar - '1';
-    int toFile = toFileChar - 'a';
-    int toRank = toRankChar - '1';
-
-    // Convert to Vector2Int
-    Vector2Int fromPos = new Vector2Int(fromRank, fromFile);
-    Vector2Int toPos = new Vector2Int(toRank, toFile);
-
-    // Highlight the from position first
-    foreach (var tile in _tiles.Values)
-    {
-        ChessTile tileScript = tile.GetComponent<ChessTile>();
-        if (tileScript.tilePos == fromPos)
+        if (string.IsNullOrEmpty(bestMove))
         {
-            var rendererMesh = tile.GetComponentInChildren<MeshRenderer>();
-            if (rendererMesh != null)
-                rendererMesh.material = highlightMaterial;
+            Debug.LogError("Engine returned null or empty move");
+            yield break;
         }
-    }
 
-    // Wait a moment to show the from square
-    yield return new WaitForSeconds(0.3f);
+        Debug.Log("Computer plays: " + bestMove);
     
-    // Highlight the to position
-    foreach (var tile in _tiles.Values)
-    {
-        ChessTile tileScript = tile.GetComponent<ChessTile>();
-        if (tileScript.tilePos == toPos)
+        string cleanMove = bestMove;
+        if (bestMove.Length > 0 && char.IsUpper(bestMove[0]) &&
+            "NBRQK".Contains(bestMove[0]))
         {
-            var rendererMesh = tile.GetComponentInChildren<MeshRenderer>();
-            if (rendererMesh != null)
-                rendererMesh.material = highlightMaterial;
+            cleanMove = bestMove.Substring(1);
         }
-    }
     
-    // Wait a moment for visual clarity
-    yield return new WaitForSeconds(0.2f);
+        // Parse the move coordinates
+        if (cleanMove.Length < 4) yield break;
+    
+        char fromFileChar = bestMove[0];
+        char fromRankChar = bestMove[1];
+        char toFileChar = bestMove[2];
+        char toRankChar = bestMove[3];
 
-    // Execute the move like a player would
-    ExecuteUciMove(bestMove);
+        // Convert to board coordinates
+        int fromFile = fromFileChar - 'a';
+        int fromRank = fromRankChar - '1';
+        int toFile = toFileChar - 'a';
+        int toRank = toRankChar - '1';
+
+        // Convert to Vector2Int
+        Vector2Int fromPos = new Vector2Int(fromRank, fromFile);
+        Vector2Int toPos = new Vector2Int(toRank, toFile);
+
+        // Highlight the from position first
+        foreach (var tile in _tiles.Values)
+        {
+            ChessTile tileScript = tile.GetComponent<ChessTile>();
+            if (tileScript.tilePos == fromPos)
+            {
+                var rendererMesh = tile.GetComponentInChildren<MeshRenderer>();
+                if (rendererMesh != null)
+                    rendererMesh.material = highlightMaterial;
+            }
+        }
+
+        // Wait a moment to show the from square
+        yield return new WaitForSeconds(0.3f);
     
-    // Clear highlights after the move
-    yield return new WaitForSeconds(0.2f);
-    ClearHighlights();
-}
+        // Highlight the to position
+        foreach (var tile in _tiles.Values)
+        {
+            ChessTile tileScript = tile.GetComponent<ChessTile>();
+            if (tileScript.tilePos == toPos)
+            {
+                var rendererMesh = tile.GetComponentInChildren<MeshRenderer>();
+                if (rendererMesh != null)
+                    rendererMesh.material = highlightMaterial;
+            }
+        }
+    
+        // Wait a moment for visual clarity
+        yield return new WaitForSeconds(0.2f);
+
+        // Execute the move like a player would
+        ExecuteUciMove(bestMove);
+    
+        // Clear highlights after the move
+        yield return new WaitForSeconds(0.2f);
+        ClearHighlights();
+    }
 
     public void ReturnToMenu()
     {
@@ -968,6 +968,8 @@ public class ChessGameManager : MonoBehaviour
 
     private void ExecuteUciMove(string uciMove)
     {
+        Debug.Log($"Executing UCI move: {uciMove}");
+
         // Remove any piece identifier if present (like N, B, R, Q, K)
         string cleanMove = uciMove;
         if (uciMove.Length > 0 && char.IsUpper(uciMove[0]) &&
@@ -975,6 +977,9 @@ public class ChessGameManager : MonoBehaviour
         {
             cleanMove = uciMove.Substring(1);
         }
+
+        // Remove capture symbol 'x' if present
+        cleanMove = cleanMove.Replace("x", "");
 
         // Make sure we have at least 4 characters for a move
         if (cleanMove.Length < 4)

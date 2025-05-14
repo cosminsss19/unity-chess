@@ -91,19 +91,19 @@ void StoreTranspositionTable(const std::string& boardState, int depth,
 	int flag, int score, const Move& bestMove);
 bool ProbeTranspositionTable(const std::string& boardState, int depth,
 	int& alpha, int& beta, int& score, Move& bestMove);
-MoveTreeNode* BuildMoveTree(const std::string& boardState, int depth, bool isWhiteTurn);
-void ExpandNode(MoveTreeNode* node, int depth, bool isWhiteTurn);
+MoveTreeNode* BuildMoveTree(const BoardPosition& position, int depth, bool isWhiteTurn);
+void ExpandNode(MoveTreeNode* node, int depth, bool isWhiteTurn, const BoardPosition& position);
 void OrderMoves(std::vector<Move>& moves, int ply, const std::string& boardState, const Move& ttMove = Move());
 int GetPieceValue(char piece);
-int Quiescence(const std::string& boardState, int alpha, int beta, bool maximizingPlayer, int maxDepth = 4);
+int Quiescence(const BoardPosition& position, int alpha, int beta, bool maximizingPlayer, int maxDepth);
 int MinimaxOnTree(MoveTreeNode* node, int depth, int alpha, int beta, bool maximizingPlayer, bool allowNullMove = true);
 bool IsCapture(const std::string& boardState, const Move& move);
-bool IsCheck(const std::string& boardState, const Move& move);
+bool IsCheck(const BoardPosition& position, const Move& move);
 bool IsDraw(const std::string& boardState);
-std::string ApplyMove(const std::string& boardState, const Move& move);
-bool IsKingInCheck(const std::string& boardState, bool isWhiteKing);
-std::vector<Move> GenerateMoves(const std::string& boardState, bool isWhite);
-int Minimax(std::string boardState, int depth, int alpha, int beta, bool maximizingPlayer);
+BoardPosition ApplyMove(const BoardPosition& position, const Move& move);
+bool IsKingInCheck(const BoardPosition& position, bool isWhiteKing);
+std::vector<Move> GenerateMoves(const BoardPosition& position, bool isWhite, bool skipCastlingCheck = false);
+int Minimax(const BoardPosition& position, int depth, int alpha, int beta, bool maximizingPlayer);
 bool IsValidMove(const std::string& boardState, int row, int col, bool isWhite);
 void AddMove(const std::string& boardState, int startPos, int endPos, char piece,
     std::vector<Move>& moves);
@@ -116,12 +116,14 @@ void GenerateBishopMoves(const std::string& boardState, int row, int col, int po
 void GenerateRookMoves(const std::string& boardState, int row, int col, int pos,
     bool isWhite, std::vector<Move>& moves);
 void GenerateKingMoves(const std::string& boardState, int row, int col, int pos,
-    bool isWhite, std::vector<Move>& moves);
-int EvaluateBoard(const std::string& boardState);
+    bool isWhite, std::vector<Move>& moves, const BoardPosition& position, bool skipCastlingCheck = false);
+int EvaluateBoard(const BoardPosition& position);
 BoardPosition ParseMoveHistory(const std::string& moveHistory);
 BoardPosition ApplyAlgebraicMove(const BoardPosition& position, const std::string& algebraicMove);
 int AlgebraicToIndex(const std::string& algebraic);
 std::string IndexToAlgebraic(int index);
+Move AlgebraicToInternalMove(const std::string& algebraicMove, const BoardPosition& position);
+void PrintBoard(const std::string& boardState);
 // ---------------------------- End of Function declarations ---------------------------- \\
 
 // Store a killer move
@@ -198,68 +200,70 @@ bool ProbeTranspositionTable(const std::string& boardState, int depth,
 
 
 // Build a move tree to a specified depth
-MoveTreeNode* BuildMoveTree(const std::string& boardState, int depth, bool isWhiteTurn) {
+MoveTreeNode* BuildMoveTree(const BoardPosition& position, int depth, bool isWhiteTurn) {
     // Create root node with current board state
-    MoveTreeNode* root = new MoveTreeNode(boardState);
-    
+    MoveTreeNode* root = new MoveTreeNode(position.boardState);
+
     // Base case: if depth is 0, return just the root
     if (depth <= 0) {
         return root;
     }
-    
+
     // Generate all possible moves from this position
-    std::vector<Move> possibleMoves = GenerateMoves(boardState, isWhiteTurn);
-    
+    std::vector<Move> possibleMoves = GenerateMoves(position, isWhiteTurn);
+
     // Create child nodes for each move
     for (const Move& move : possibleMoves) {
-        // Apply the move to get new board state
-        std::string newBoardState = ApplyMove(boardState, move);
-        
-        // Create child node
-        MoveTreeNode* childNode = new MoveTreeNode(newBoardState, move, root);
-        
+        // --- Apply the move to get new position (must update castling/en passant/etc.) ---
+        // You should implement this function for full legality:
+        // BoardPosition newPosition = ApplyMove(position, move);
+
+        // For now, as a placeholder, update only the board state:
+        BoardPosition newPosition = position;
+        newPosition = ApplyMove(position, move);
+        // TODO: update castling rights, en passant, halfmove clock, etc. in newPosition here!
+
+        MoveTreeNode* childNode = new MoveTreeNode(newPosition.boardState, move, root);
+
         // Recursively build the tree for this move with reduced depth
         if (depth > 1) {
-            // Generate responses (opponent's moves)
-            std::vector<Move> responses = GenerateMoves(newBoardState, !isWhiteTurn);
-            
-            for (const Move& response : responses) {
-                std::string responseState = ApplyMove(newBoardState, response);
-                MoveTreeNode* grandchildNode = new MoveTreeNode(responseState, response, childNode);
-                
-                // Continue building the tree recursively
-                if (depth > 2) {
-                    ExpandNode(grandchildNode, depth - 2, isWhiteTurn);
-                }
-                
-                childNode->children.push_back(grandchildNode);
+            MoveTreeNode* responseTree = BuildMoveTree(newPosition, depth - 1, !isWhiteTurn);
+            // Attach all children of responseTree to childNode
+            for (MoveTreeNode* grandchild : responseTree->children) {
+                childNode->children.push_back(grandchild);
             }
+            // Clean up the temporary responseTree node itself (not its children)
+            delete responseTree;
         }
-        
+
         // Add the child to the parent
         root->children.push_back(childNode);
     }
-    
+
     return root;
 }
 
 // Expand a node to create its children up to a certain depth
-void ExpandNode(MoveTreeNode* node, int depth, bool isWhiteTurn) {
+void ExpandNode(MoveTreeNode* node, int depth, bool isWhiteTurn, const BoardPosition& position) {
     if (depth <= 0) return;
-    
+
     // Generate all possible moves from this position
-    std::vector<Move> possibleMoves = GenerateMoves(node->boardState, isWhiteTurn);
-    
+    std::vector<Move> possibleMoves = GenerateMoves(position, isWhiteTurn);
+
     // Create child nodes for each move
     for (const Move& move : possibleMoves) {
-        std::string newBoardState = ApplyMove(node->boardState, move);
-        MoveTreeNode* childNode = new MoveTreeNode(newBoardState, move, node);
-        
+        // Apply the move to get new position (update all state)
+        BoardPosition newPosition = position;
+        newPosition = ApplyMove(position, move);
+        // TODO: update castling rights, en passant, halfmove clock, etc. in newPosition here!
+
+        MoveTreeNode* childNode = new MoveTreeNode(newPosition.boardState, move, node);
+
         // Recursively expand this node with reduced depth
         if (depth > 1) {
-            ExpandNode(childNode, depth - 1, !isWhiteTurn);
+            ExpandNode(childNode, depth - 1, !isWhiteTurn, newPosition);
         }
-        
+
         node->children.push_back(childNode);
     }
 }
@@ -323,9 +327,9 @@ int GetPieceValue(char piece) {
     }
 }
 
-int Quiescence(const std::string& boardState, int alpha, int beta, bool maximizingPlayer, int maxDepth) {
+int Quiescence(const BoardPosition& position, int alpha, int beta, bool maximizingPlayer, int maxDepth) {
     // Base evaluation
-    int standPat = EvaluateBoard(boardState);
+    int standPat = EvaluateBoard(position);
 
     // Return immediately if we've reached maximum quiescence depth
     if (maxDepth <= 0) {
@@ -344,28 +348,14 @@ int Quiescence(const std::string& boardState, int alpha, int beta, bool maximizi
 
     // Generate only capture moves
     std::vector<Move> captureMoves;
-    std::vector<Move> allMoves = GenerateMoves(boardState, maximizingPlayer);
+    std::vector<Move> allMoves = GenerateMoves(position, maximizingPlayer);
 
     // Filter to only keep captures
     for (const Move& move : allMoves) {
-        try {
-            if (move.notation.length() < 3) {
-                continue; // Skip invalid moves instead of throwing
-            }
-    
-            int endPos = std::stoi(move.notation.substr(move.notation.length() - 2));
-            if (endPos < 0 || endPos >= boardState.size()) {
-                continue; // Skip out-of-range positions
-            }
-    
-            if (boardState[endPos] != ' ' || move.isEnPassant) {
-                captureMoves.push_back(move);
-            }
-        }
-        catch (const std::exception& e) {
-            // Log the error and continue
-            std::cerr << "Error processing move: " << move.notation << " - " << e.what() << std::endl;
-            continue;
+        int endPos = std::stoi(move.notation.substr(move.notation.length() - 2));
+        char target = position.boardState[endPos];
+        if (target != ' ' || move.isEnPassant) {
+            captureMoves.push_back(move);
         }
     }
 
@@ -377,8 +367,8 @@ int Quiescence(const std::string& boardState, int alpha, int beta, bool maximizi
     // Recursively search capture sequences
     if (maximizingPlayer) {
         for (const Move& move : captureMoves) {
-            std::string newBoardState = ApplyMove(boardState, move);
-            int score = Quiescence(newBoardState, alpha, beta, false, maxDepth - 1);
+            BoardPosition newPosition = ApplyMove(position, move);
+            int score = Quiescence(newPosition, alpha, beta, false, maxDepth - 1);
             if (score >= beta) {
                 return beta;
             }
@@ -389,8 +379,8 @@ int Quiescence(const std::string& boardState, int alpha, int beta, bool maximizi
         return alpha;
     } else {
         for (const Move& move : captureMoves) {
-            std::string newBoardState = ApplyMove(boardState, move);
-            int score = Quiescence(newBoardState, alpha, beta, true, maxDepth - 1);
+            BoardPosition newPosition = ApplyMove(position, move);
+            int score = Quiescence(newPosition, alpha, beta, true, maxDepth - 1);
             if (score <= alpha) {
                 return alpha;
             }
@@ -408,172 +398,172 @@ int MinimaxOnTree(MoveTreeNode* node, int depth, int alpha, int beta, bool maxim
     if (node->isEvaluated) {
         return node->evaluation;
     }
-    
+
     // Try the transposition table first
     Move ttMove;
     int ttScore;
-    
+
     if (ProbeTranspositionTable(node->boardState, depth, alpha, beta, ttScore, ttMove)) {
         return ttScore;
     }
-    
+
     // If at max depth, use quiescence search
     if (depth == 0) {
-        node->evaluation = Quiescence(node->boardState, alpha, beta, maximizingPlayer);
+        // You need a full BoardPosition for quiescence
+        BoardPosition tempPosition;
+        tempPosition.boardState = node->boardState;
+        // If you store more state in the node, set it here!
+        node->evaluation = Quiescence(tempPosition, alpha, beta, maximizingPlayer, 8);
         node->isEvaluated = true;
-        
+
         // Store in transposition table
-        int flag = (node->evaluation <= alpha) ? TT_ALPHA : 
+        int flag = (node->evaluation <= alpha) ? TT_ALPHA :
                   ((node->evaluation >= beta) ? TT_BETA : TT_EXACT);
         StoreTranspositionTable(node->boardState, depth, flag, node->evaluation, Move());
-        
+
         return node->evaluation;
     }
-    
+
     // Null move pruning
-    if (allowNullMove && depth >= 3 && !IsKingInCheck(node->boardState, maximizingPlayer)) {
-        int R = 2 + depth / 6; // Adaptive reduction
-        // Skip a move and see if position is still good
-        int nullMoveScore = -MinimaxOnTree(node, depth - 1 - R, -beta, -beta + 1, !maximizingPlayer, false);
-        
-        if (nullMoveScore >= beta) {
-            // Verify with a shallower search to avoid zugzwang problems
-            if (depth >= 5) {
-                int verificationScore = MinimaxOnTree(node, depth - 4, alpha, beta, maximizingPlayer, false);
-                if (verificationScore >= beta)
+    {
+        BoardPosition tempPosition;
+        tempPosition.boardState = node->boardState;
+        // Set other fields if you store them in the node
+        if (allowNullMove && depth >= 3 && !IsKingInCheck(tempPosition, maximizingPlayer)) {
+            int R = 2 + depth / 6; // Adaptive reduction
+            int nullMoveScore = -MinimaxOnTree(node, depth - 1 - R, -beta, -beta + 1, !maximizingPlayer, false);
+
+            if (nullMoveScore >= beta) {
+                if (depth >= 5) {
+                    int verificationScore = MinimaxOnTree(node, depth - 4, alpha, beta, maximizingPlayer, false);
+                    if (verificationScore >= beta)
+                        return beta;
+                } else {
                     return beta;
-            } else {
-                return beta; // Position is good enough to cause a cutoff
+                }
             }
         }
     }
-    
+
     // If leaf node, expand it
     if (node->children.empty()) {
-        ExpandNode(node, 1, maximizingPlayer);
+        BoardPosition tempPosition;
+        tempPosition.boardState = node->boardState;
+        // Set other fields if you store them in the node
+        ExpandNode(node, 1, maximizingPlayer, tempPosition);
         if (node->children.empty()) {
             // If still no children after expansion, evaluate the position
-            // This could be checkmate or stalemate
-            bool isInCheck = IsKingInCheck(node->boardState, maximizingPlayer);
+            bool isInCheck = IsKingInCheck(tempPosition, maximizingPlayer);
             if (isInCheck) {
-                // Checkmate (worst score, adjusted by depth to find faster mates)
                 node->evaluation = maximizingPlayer ? -100000 + depth * 100 : 100000 - depth * 100;
             } else {
-                // Stalemate is a draw
                 node->evaluation = 0;
             }
             node->isEvaluated = true;
             return node->evaluation;
         }
     }
-    
+
     // Order moves to improve alpha-beta pruning efficiency
     std::vector<Move> moves;
     for (const auto& child : node->children) {
         moves.push_back(child->move);
     }
     OrderMoves(moves, depth, node->boardState, ttMove);
-    
-    // Best move so far
+
     Move bestMove;
     int nodeFlag = TT_ALPHA;
-    
-    // Apply minimax with alpha-beta pruning
+
     if (maximizingPlayer) {
         int maxEval = -2147483647;
-        
+
         for (int i = 0; i < node->children.size(); i++) {
             MoveTreeNode* childNode = node->children[i];
+
+            // Reconstruct BoardPosition for the child
+            BoardPosition tempPosition;
+            tempPosition.boardState = childNode->boardState;
+            // Set other fields if you store them in the node
+
             int eval;
-            
             // Late Move Reduction (LMR)
-            if (i >= 3 && depth >= 3 && !IsCapture(node->boardState, childNode->move) && !IsCheck(node->boardState, childNode->move)) {
-                // Reduced depth search for likely poor moves
+            if (i >= 3 && depth >= 3 && !IsCapture(tempPosition.boardState, childNode->move) && !IsCheck(tempPosition, childNode->move)) {
                 int R = 1 + customMin(depth / 3, 3) + customMin(i / 6, 2);
                 eval = -MinimaxOnTree(childNode, depth - 1 - R, -alpha - 1, -alpha, false);
-                
-                // If reduced search looks promising, do a full search
+
                 if (eval > alpha && eval < beta) {
                     eval = -MinimaxOnTree(childNode, depth - 1, -beta, -alpha, false);
                 }
             } else {
-                // Full-depth search
                 eval = -MinimaxOnTree(childNode, depth - 1, -beta, -alpha, false);
             }
-            
+
             maxEval = customMax(maxEval, eval);
-            
+
             if (maxEval > alpha) {
                 alpha = maxEval;
                 bestMove = childNode->move;
                 nodeFlag = TT_EXACT;
-                
-                // Store killer move if it's a good quiet move
-                if (!IsCapture(node->boardState, childNode->move)) {
+
+                if (!IsCapture(tempPosition.boardState, childNode->move)) {
                     StoreKillerMove(childNode->move, depth);
                 }
             }
-            
+
             if (beta <= alpha) {
                 nodeFlag = TT_BETA;
-                break; // Beta cut-off
+                break;
             }
         }
-        
+
         node->evaluation = maxEval;
         node->isEvaluated = true;
-        
-        // Store position in transposition table
         StoreTranspositionTable(node->boardState, depth, nodeFlag, maxEval, bestMove);
-        
         return maxEval;
     } else {
         int minEval = 2147483647;
-        
+
         for (int i = 0; i < node->children.size(); i++) {
             MoveTreeNode* childNode = node->children[i];
+
+            // Reconstruct BoardPosition for the child
+            BoardPosition tempPosition;
+            tempPosition.boardState = childNode->boardState;
+            // Set other fields if you store them in the node
+
             int eval;
-            
-            // Late Move Reduction (LMR)
-            if (i >= 3 && depth >= 3 && !IsCapture(node->boardState, childNode->move) && !IsCheck(node->boardState, childNode->move)) {
-                // Reduced depth search for likely poor moves
+            if (i >= 3 && depth >= 3 && !IsCapture(tempPosition.boardState, childNode->move) && !IsCheck(tempPosition, childNode->move)) {
                 int R = 1 + customMin(depth / 3, 3) + customMin(i / 6, 2);
                 eval = -MinimaxOnTree(childNode, depth - 1 - R, -beta, -alpha, true);
-                
-                // If reduced search looks promising, do a full search
+
                 if (eval > alpha && eval < beta) {
                     eval = -MinimaxOnTree(childNode, depth - 1, -beta, -alpha, true);
                 }
             } else {
-                // Full-depth search
                 eval = -MinimaxOnTree(childNode, depth - 1, -beta, -alpha, true);
             }
-            
+
             minEval = customMin(minEval, eval);
-            
+
             if (minEval < beta) {
                 beta = minEval;
                 bestMove = childNode->move;
                 nodeFlag = TT_EXACT;
-                
-                // Store killer move if it's a good quiet move
-                if (!IsCapture(node->boardState, childNode->move)) {
+
+                if (!IsCapture(tempPosition.boardState, childNode->move)) {
                     StoreKillerMove(childNode->move, depth);
                 }
             }
-            
+
             if (beta <= alpha) {
                 nodeFlag = TT_ALPHA;
-                break; // Alpha cut-off
+                break;
             }
         }
-        
+
         node->evaluation = minEval;
         node->isEvaluated = true;
-        
-        // Store position in transposition table
         StoreTranspositionTable(node->boardState, depth, nodeFlag, minEval, bestMove);
-        
         return minEval;
     }
 }
@@ -588,16 +578,16 @@ bool IsCapture(const std::string& boardState, const Move& move) {
 }
 
 // Check if a move gives check
-bool IsCheck(const std::string& boardState, const Move& move) {
-    // Apply the move to get the new board state
-    std::string newState = ApplyMove(boardState, move);
-    
+bool IsCheck(const BoardPosition& position, const Move& move) {
+    // Apply the move to get the new position
+    BoardPosition newPosition = ApplyMove(position, move);
+
     // Get the color of the piece that moved
     char piece = move.notation[0];
     bool isWhitePiece = isupper(piece);
-    
+
     // Check if the opponent's king is in check after this move
-    return IsKingInCheck(newState, !isWhitePiece);
+    return IsKingInCheck(newPosition, !isWhitePiece);
 }
 
 // Draw detection
@@ -642,99 +632,97 @@ bool IsDraw(const std::string& boardState) {
 }
 
 // Forward declaration for the EvaluateBoard function
-int EvaluateBoard(const std::string& boardState);
+int EvaluateBoard(const BoardPosition& position);
 
 // Apply a move to the board and return the new board state
-std::string ApplyMove(const std::string& boardState, const Move& move) {
-    if (move.notation.empty()) {
-        throw std::invalid_argument("Empty move notation");
-    }
-    
-    if (move.notation.length() < 3) {
-        throw std::invalid_argument("Invalid move notation: " + move.notation);
-    }
+BoardPosition ApplyMove(const BoardPosition& position, const Move& move) {
+    BoardPosition newPosition = position;
+    const int BOARD_SIZE = 8;
 
-    std::string newBoardState = boardState;
-
-    // Parse the move notation - format is [piece][startPos][endPos]
+    // Parse move details
     char piece = move.notation[0];
-    std::string startPosStr;
-    std::string endPosStr;
-
-    if (move.notation.length() == 3) {
-        // For 3-char notations: piece (1) + startPos (1) + endPos (1)
-        startPosStr = move.notation.substr(1, 1);
-        endPosStr = move.notation.substr(2, 1);
-    } else {
-        // For longer notations
-        startPosStr = move.notation.substr(1, move.notation.length() - 3);
-        endPosStr = move.notation.substr(move.notation.length() - 2);
-    }
-
-    if (startPosStr.empty() || endPosStr.empty() ||
-        !std::all_of(startPosStr.begin(), startPosStr.end(), ::isdigit) ||
-        !std::all_of(endPosStr.begin(), endPosStr.end(), ::isdigit)) {
-        throw std::invalid_argument("Invalid position format in move: " + move.notation);
-    }
-    
+    std::string startPosStr = move.notation.substr(1, move.notation.length() - 3);
+    std::string endPosStr = move.notation.substr(move.notation.length() - 2);
     int startPos = std::stoi(startPosStr);
     int endPos = std::stoi(endPosStr);
-    
 
-    if (startPos < 0 || startPos >= boardState.size() || endPos < 0 || endPos >= boardState.size()) {
-        throw std::out_of_range("Move indices out of range: " + move.notation);
-    }
+    // Update the board
+    newPosition.boardState[endPos] = newPosition.boardState[startPos];
+    newPosition.boardState[startPos] = ' ';
 
-    // Move the piece
-    newBoardState[endPos] = piece;
-    newBoardState[startPos] = ' ';
-
-    // Handle en passant capture
+    // Handle en passant
     if (move.isEnPassant) {
-        newBoardState[move.enPassantCapturePos] = ' ';  // Remove the captured pawn
+        newPosition.boardState[move.enPassantCapturePos] = ' ';
     }
 
     // Handle castling
     if (move.isCastling) {
-        const int BOARD_SIZE = 8;
-        int row = startPos / BOARD_SIZE;
-        int kingStartCol = startPos % BOARD_SIZE; // Should be 4
-
         if (move.isKingsideCastling) {
-            // Move the rook from h-file (7) to f-file (5)
-            int rookStartPos = row * BOARD_SIZE + 7;
-            int rookEndPos = row * BOARD_SIZE + 5;
-            char rook = (piece == 'K') ? 'R' : 'r';
-            newBoardState[rookEndPos] = rook;
-            newBoardState[rookStartPos] = ' ';
+            if (position.whiteToMove) {
+                // Move rook for white kingside
+                newPosition.boardState[63] = ' ';
+                newPosition.boardState[61] = 'R';
+            } else {
+                // Move rook for black kingside
+                newPosition.boardState[7] = ' ';
+                newPosition.boardState[5] = 'r';
+            }
         } else {
-            // Move the rook from a-file (0) to d-file (3)
-            int rookStartPos = row * BOARD_SIZE + 0;
-            int rookEndPos = row * BOARD_SIZE + 3;
-            char rook = (piece == 'K') ? 'R' : 'r';
-            newBoardState[rookEndPos] = rook;
-            newBoardState[rookStartPos] = ' ';
+            if (position.whiteToMove) {
+                // Move rook for white queenside
+                newPosition.boardState[56] = ' ';
+                newPosition.boardState[59] = 'R';
+            } else {
+                // Move rook for black queenside
+                newPosition.boardState[0] = ' ';
+                newPosition.boardState[3] = 'r';
+            }
         }
     }
 
-    // Handle pawn promotion
-    const int BOARD_SIZE = 8;
-    int row = endPos / BOARD_SIZE;
+    // Update castling rights if king or rook moves/captures
+    if (piece == 'K') {
+        newPosition.whiteCanCastleKingside = false;
+        newPosition.whiteCanCastleQueenside = false;
+    } else if (piece == 'k') {
+        newPosition.blackCanCastleKingside = false;
+        newPosition.blackCanCastleQueenside = false;
+    }
+    // If a rook moves or is captured, update castling rights
+    if (startPos == 0 || endPos == 0) newPosition.whiteCanCastleQueenside = false; // White queenside rook
+    if (startPos == 7 || endPos == 7) newPosition.whiteCanCastleKingside = false;  // White kingside rook
+    if (startPos == 56 || endPos == 56) newPosition.blackCanCastleQueenside = false; // Black queenside rook
+    if (startPos == 63 || endPos == 63) newPosition.blackCanCastleKingside = false;  // Black kingside rook
 
-    // Check if pawn reached the end of the board
-    if ((piece == 'P' && row == 0) || (piece == 'p' && row == 7)) {
-        // Promote to queen by default
-        newBoardState[endPos] = (piece == 'P') ? 'Q' : 'q';
+    // Update en passant target square
+    newPosition.enPassantTargetSquare = -1;
+    if ((piece == 'P' && startPos / 8 == 6 && endPos / 8 == 4) ||
+        (piece == 'p' && startPos / 8 == 1 && endPos / 8 == 3)) {
+        // Pawn double move
+        newPosition.enPassantTargetSquare = (startPos + endPos) / 2;
     }
 
-    return newBoardState;
+    // Update halfmove clock
+    if (tolower(piece) == 'p' || (position.boardState[endPos] != ' ')) {
+        newPosition.halfMoveClock = 0;
+    } else {
+        newPosition.halfMoveClock++;
+    }
+
+    // Update fullmove number and side to move
+    if (!position.whiteToMove) {
+        newPosition.fullMoveNumber++;
+    }
+    newPosition.whiteToMove = !position.whiteToMove;
+
+    return newPosition;
 }
 
 // Function to check if a king is in check
-bool IsKingInCheck(const std::string& boardState, bool isWhiteKing) {
-    const int BOARD_SIZE = 8;
+bool IsKingInCheck(const BoardPosition& position, bool isWhiteKing) {
+    const std::string& boardState = position.boardState;
     char kingChar = isWhiteKing ? 'K' : 'k';
-    
+
     // Find the king's position
     int kingPos = -1;
     for (size_t i = 0; i < boardState.size(); i++) {
@@ -743,94 +731,63 @@ bool IsKingInCheck(const std::string& boardState, bool isWhiteKing) {
             break;
         }
     }
-    
-    if (kingPos == -1) {
-        // King not found (shouldn't happen in a valid game)
-        return false;
-    }
-    
-    // Generate all opponent's moves
-    std::vector<Move> opponentMoves = GenerateMoves(boardState, !isWhiteKing);
-    
-    // Check if any opponent move can capture the king
+    if (kingPos == -1) return false;
+
+    // Generate all opponent's moves, but skip castling logic!
+    std::vector<Move> opponentMoves = GenerateMoves(position, !isWhiteKing, /*skipCastlingCheck=*/true);
+
     for (const Move& move : opponentMoves) {
         int endPos = std::stoi(move.notation.substr(move.notation.length() - 2));
-        if (endPos == kingPos) {
-            return true; // King is in check
-        }
+        if (endPos == kingPos) return true;
     }
-    
-    return false; // King is not in check
+    return false;
 }
 
-std::vector<Move> GenerateMoves(const std::string& boardState, bool isWhite) {
+std::vector<Move> GenerateMoves(const BoardPosition& position, bool isWhite, bool skipCastlingCheck) {
+    const std::string& boardState = position.boardState;
     std::vector<Move> moves;
-    
-    // Board dimensions
     const int BOARD_SIZE = 8;
-    
-    // Generate moves for all pieces
     for (int i = 0; i < boardState.size(); ++i) {
         char piece = boardState[i];
-        
-        // Skip empty squares and opponent pieces
-        if (piece == ' ' || (isWhite && islower(piece)) || (!isWhite && isupper(piece))) {
-            continue;
-        }
-        
-        // Current position
+        if (piece == ' ' || (isWhite && islower(piece)) || (!isWhite && isupper(piece))) continue;
         int row = i / BOARD_SIZE;
         int col = i % BOARD_SIZE;
-        
-        // Pawn moves
         if ((isWhite && piece == 'P') || (!isWhite && piece == 'p')) {
-            GeneratePawnMoves(boardState, row, col, i, isWhite, moves);
-        }
-        // Knight moves
-        else if ((isWhite && piece == 'N') || (!isWhite && piece == 'n')) {
+            GeneratePawnMoves(boardState, row, col, i, isWhite, moves, position.enPassantTargetSquare % 8);
+        } else if ((isWhite && piece == 'N') || (!isWhite && piece == 'n')) {
             GenerateKnightMoves(boardState, row, col, i, isWhite, moves);
-        }
-        // Bishop moves
-        else if ((isWhite && piece == 'B') || (!isWhite && piece == 'b')) {
+        } else if ((isWhite && piece == 'B') || (!isWhite && piece == 'b')) {
             GenerateBishopMoves(boardState, row, col, i, isWhite, moves);
-        }
-        // Rook moves
-        else if ((isWhite && piece == 'R') || (!isWhite && piece == 'r')) {
+        } else if ((isWhite && piece == 'R') || (!isWhite && piece == 'r')) {
             GenerateRookMoves(boardState, row, col, i, isWhite, moves);
-        }
-        // Queen moves (combination of bishop and rook)
-        else if ((isWhite && piece == 'Q') || (!isWhite && piece == 'q')) {
-            GenerateBishopMoves(boardState, row, col, i, isWhite, moves); // Diagonal moves
-            GenerateRookMoves(boardState, row, col, i, isWhite, moves);   // Straight moves
-        }
-        // King moves
-        else if ((isWhite && piece == 'K') || (!isWhite && piece == 'k')) {
-            GenerateKingMoves(boardState, row, col, i, isWhite, moves);
+        } else if ((isWhite && piece == 'Q') || (!isWhite && piece == 'q')) {
+            GenerateBishopMoves(boardState, row, col, i, isWhite, moves);
+            GenerateRookMoves(boardState, row, col, i, isWhite, moves);
+        } else if ((isWhite && piece == 'K') || (!isWhite && piece == 'k')) {
+            GenerateKingMoves(boardState, row, col, i, isWhite, moves, position, skipCastlingCheck);
         }
     }
-    
     return moves;
 }
 
-int Minimax(std::string boardState, int depth, int alpha, int beta, bool maximizingPlayer) {
+int Minimax(const BoardPosition& position, int depth, int alpha, int beta, bool maximizingPlayer) {
     if (depth == 0) {
-        return EvaluateBoard(boardState);
+        return EvaluateBoard(position);
     }
 
-    std::vector<Move> moves = GenerateMoves(boardState, maximizingPlayer);
-    
+    std::vector<Move> moves = GenerateMoves(position, maximizingPlayer);
+
     // No legal moves - could be stalemate or checkmate
     if (moves.empty()) {
-        // This is a simple approach - ideally would check if king is in check
+        // Ideally would check if king is in check
         return maximizingPlayer ? -20000 : 20000; // Checkmate
     }
-    
+
     if (maximizingPlayer) {
-        int maxEval = -2147483648;
+        int maxEval = -2147483647;
         for (const Move& move : moves) {
-            // Actually apply the move
-            std::string newBoardState = ApplyMove(boardState, move);
-            int eval = Minimax(newBoardState, depth - 1, alpha, beta, false);
+            BoardPosition newPosition = ApplyMove(position, move);
+            int eval = Minimax(newPosition, depth - 1, alpha, beta, false);
             maxEval = customMax(maxEval, eval);
             alpha = customMax(alpha, eval);
             if (beta <= alpha) {
@@ -838,13 +795,11 @@ int Minimax(std::string boardState, int depth, int alpha, int beta, bool maximiz
             }
         }
         return maxEval;
-    }
-    else {
+    } else {
         int minEval = 2147483647;
         for (const Move& move : moves) {
-            // Actually apply the move
-            std::string newBoardState = ApplyMove(boardState, move);
-            int eval = Minimax(newBoardState, depth - 1, alpha, beta, true);
+            BoardPosition newPosition = ApplyMove(position, move);
+            int eval = Minimax(newPosition, depth - 1, alpha, beta, true);
             minEval = customMin(minEval, eval);
             beta = customMin(beta, eval);
             if (beta <= alpha) {
@@ -861,15 +816,15 @@ bool IsValidMove(const std::string& boardState, int row, int col, bool isWhite) 
     if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) {
         return false;
     }
-    
+
     int pos = row * BOARD_SIZE + col;
     char piece = boardState[pos];
-    
+
     // Empty square is always valid
     if (piece == ' ') {
         return true;
     }
-    
+
     // Check if the piece is an opponent's
     return (isWhite && islower(piece)) || (!isWhite && isupper(piece));
 }
@@ -881,15 +836,16 @@ void AddMove(const std::string& boardState, int startPos, int endPos, char piece
     std::string endPosStr = (endPos < 10) ? "0" + std::to_string(endPos) : std::to_string(endPos);
     
     std::string notation = piece + startPosStr + endPosStr;
+
     moves.push_back({notation});
 }
 
 // Enhanced pawn move generation with promotion
-void GeneratePawnMoves(const std::string& boardState, int row, int col, int pos, 
-                        bool isWhite, std::vector<Move>& moves, int enPassantCol)   
+void GeneratePawnMoves(const std::string& boardState, int row, int col, int pos,
+    bool isWhite, std::vector<Move>& moves, int enPassantCol)
 {
     const int BOARD_SIZE = 8;
-    char piece = isWhite ? 'P' : 'p';
+    char piece = boardState[pos];
     int direction = isWhite ? -1 : 1;
     bool lastRank = (isWhite && row + direction == 0) || (!isWhite && row + direction == 7);
 
@@ -920,7 +876,10 @@ void GeneratePawnMoves(const std::string& boardState, int row, int col, int pos,
         if (newRow >= 0 && newRow < BOARD_SIZE && newCol >= 0 && newCol < BOARD_SIZE) {
             int newPos = newRow * BOARD_SIZE + newCol;
             char targetPiece = boardState[newPos];
-            if (targetPiece != ' ' && ((isWhite && islower(targetPiece)) || (!isWhite && isupper(targetPiece)))) {
+
+            // Check explicitly that target is an opponent's piece
+            bool isOpponentPiece = (isWhite && islower(targetPiece)) || (!isWhite && isupper(targetPiece));
+            if (targetPiece != ' ' && isOpponentPiece) {
                 AddMove(boardState, pos, newPos, piece, moves);
             }
         }
@@ -1020,7 +979,7 @@ void GenerateRookMoves(const std::string& boardState, int row, int col, int pos,
 
 // Enhanced King move generation with castling
 void GenerateKingMoves(const std::string& boardState, int row, int col, int pos, 
-                        bool isWhite, std::vector<Move>& moves) {
+                      bool isWhite, std::vector<Move>& moves, const BoardPosition& position, bool skipCastlingCheck) {
     char piece = isWhite ? 'K' : 'k';
     const std::vector<std::pair<int, int>> directions = {
         {-1, -1}, {-1, 0}, {-1, 1},
@@ -1039,59 +998,73 @@ void GenerateKingMoves(const std::string& boardState, int row, int col, int pos,
         }
     }
 
-    // Castling logic
-    // For simplicity, we're not tracking if the king or rook has moved previously
-    // A complete implementation would need to track this
+    // --- Castling legality checks ---
+    if (!skipCastlingCheck && ((isWhite && row == 7 && col == 4) || (!isWhite && row == 0 && col == 4))) {
+        int baseRow = isWhite ? 7 : 0;
+        char rook = isWhite ? 'R' : 'r';
 
-    // Check if the king is in the starting position
-    if ((isWhite && row == 7 && col == 4) || (!isWhite && row == 0 && col == 4)) {
         // Kingside castling
-        bool canCastleKingside = true;
-        // Check if the squares between king and rook are empty
-        for (int c = col + 1; c < col + 3; c++) {
-            if (boardState[row * BOARD_SIZE + c] != ' ') {
-                canCastleKingside = false;
-                break;
+        bool canCastleKingside = isWhite ? position.whiteCanCastleKingside : position.blackCanCastleKingside;
+        if (canCastleKingside &&
+            boardState[baseRow * 8 + 5] == ' ' &&
+            boardState[baseRow * 8 + 6] == ' ' &&
+            boardState[baseRow * 8 + 7] == rook) {
+            // Check king not in check, and squares not attacked
+            bool safe = true;
+            for (int c = 4; c <= 6; ++c) {
+                BoardPosition tempPosition = position;
+                tempPosition.boardState[baseRow * 8 + 4] = ' ';
+                tempPosition.boardState[baseRow * 8 + c] = piece;
+                if (IsKingInCheck(tempPosition, isWhite)) {
+                    safe = false;
+                    break;
+                }
+                tempPosition.boardState[baseRow * 8 + c] = ' ';
+                tempPosition.boardState[baseRow * 8 + 4] = piece;
             }
-        }
-
-        // Check if the rook is in place
-        int rookCol = col + 3;
-        char expectedRook = isWhite ? 'R' : 'r';
-        if (canCastleKingside && boardState[row * BOARD_SIZE + rookCol] == expectedRook) {
-            // Add castling move
-            Move castlingMove;
-            castlingMove.notation = piece + std::to_string(pos) + std::to_string(row * BOARD_SIZE + (col + 2));
-            castlingMove.isCastling = true;
-            castlingMove.isKingsideCastling = true;
-            moves.push_back(castlingMove);
+            if (safe) {
+                Move castlingMove;
+                castlingMove.notation = piece + std::to_string(pos) + std::to_string(baseRow * 8 + 6);
+                castlingMove.isCastling = true;
+                castlingMove.isKingsideCastling = true;
+                moves.push_back(castlingMove);
+            }
         }
 
         // Queenside castling
-        bool canCastleQueenside = true;
-        // Check if the squares between king and rook are empty
-        for (int c = col - 1; c > col - 4; c--) {
-            if (boardState[row * BOARD_SIZE + c] != ' ') {
-                canCastleQueenside = false;
-                break;
+        bool canCastleQueenside = isWhite ? position.whiteCanCastleQueenside : position.blackCanCastleQueenside;
+        if (canCastleQueenside &&
+            boardState[baseRow * 8 + 1] == ' ' &&
+            boardState[baseRow * 8 + 2] == ' ' &&
+            boardState[baseRow * 8 + 3] == ' ' &&
+            boardState[baseRow * 8 + 0] == rook) {
+            // Check king not in check, and squares not attacked
+            bool safe = true;
+            for (int c = 2; c <= 4; ++c) {
+                BoardPosition tempPosition = position;
+                tempPosition.boardState[baseRow * 8 + 4] = ' ';
+                tempPosition.boardState[baseRow * 8 + c] = piece;
+                if (IsKingInCheck(tempPosition, isWhite)) {
+                    safe = false;
+                    break;
+                }
+                tempPosition.boardState[baseRow * 8 + c] = ' ';
+                tempPosition.boardState[baseRow * 8 + 4] = piece;
             }
-        }
-
-        // Check if the rook is in place
-        rookCol = col - 4;
-        if (canCastleQueenside && boardState[row * BOARD_SIZE + rookCol] == expectedRook) {
-            // Add castling move
-            Move castlingMove;
-            castlingMove.notation = piece + std::to_string(pos) + std::to_string(row * BOARD_SIZE + (col - 2));
-            castlingMove.isCastling = true;
-            castlingMove.isKingsideCastling = false;
-            moves.push_back(castlingMove);
+            if (safe) {
+                Move castlingMove;
+                castlingMove.notation = piece + std::to_string(pos) + std::to_string(baseRow * 8 + 2);
+                castlingMove.isCastling = true;
+                castlingMove.isKingsideCastling = false;
+                moves.push_back(castlingMove);
+            }
         }
     }
 }
 
 // Enhanced evaluation function with more piece-square tables
-int EvaluateBoard(const std::string& boardState) {
+int EvaluateBoard(const BoardPosition& position) {
+    const std::string& boardState = position.boardState;
     const int BOARD_SIZE = 8;
     int score = 0;
     
@@ -1222,12 +1195,18 @@ int EvaluateBoard(const std::string& boardState) {
     }
     
     // Bonus for checking the opponent's king
-    if (IsKingInCheck(boardState, false)) {
+    if (IsKingInCheck(position, false)) {
         score += 50; // Bonus for checking the black king
     }
-    if (IsKingInCheck(boardState, true)) {
+    if (IsKingInCheck(position, true)) {
         score -= 50; // Penalty for white king being in check
     }
+
+    // (Optional) Add more evaluation terms using position fields, e.g.:
+    // - Bonus for castling rights
+    // - Penalty for doubled/isolated pawns
+    // - Bonus for passed pawns
+    // - Penalty for no castling rights, etc.
     
     return score;
 }
@@ -1259,7 +1238,16 @@ BoardPosition ParseMoveHistory(const std::string& moveHistory) {
     
     // Apply each move to update the position
     for (const std::string& move : moves) {
-        position = ApplyAlgebraicMove(position, move);
+        if (move.empty()) continue;
+        try {
+            Move internalMove = AlgebraicToInternalMove(move, position);
+            position = ApplyMove(position, internalMove);
+            PrintBoard(position.boardState);
+            position.whiteToMove = !position.whiteToMove;
+        } catch (const std::exception& e) {
+            std::cerr << "Error applying move '" << move << "': " << e.what() << std::endl;
+            throw; // or continue;
+        }
     }
     
     return position;
@@ -1294,7 +1282,6 @@ BoardPosition ApplyAlgebraicMove(const BoardPosition& position, const std::strin
         // Parse the algebraic move
         int index = 0;
         if (isupper(algebraicMove[0]) && !isdigit(algebraicMove[1])) {
-            piece = algebraicMove[0];
             index = 1;
         }
         
@@ -1310,8 +1297,13 @@ BoardPosition ApplyAlgebraicMove(const BoardPosition& position, const std::strin
         }
         
         // Convert from algebraic coordinates to board indices
+        if (from.length() != 2 || to.length() != 2) {
+            throw std::invalid_argument("Invalid algebraic move format: " + algebraicMove);
+        }
         int fromIndex = AlgebraicToIndex(from);
         int toIndex = AlgebraicToIndex(to);
+        
+        piece = newPosition.boardState[fromIndex];
         
         // Update the board state
         newPosition.boardState[toIndex] = newPosition.boardState[fromIndex];
@@ -1341,46 +1333,55 @@ BoardPosition ApplyAlgebraicMove(const BoardPosition& position, const std::strin
 }
 
 int AlgebraicToIndex(const std::string& algebraic) {
+    if (algebraic.length() != 2 ||
+        algebraic[0] < 'a' || algebraic[0] > 'h' ||
+        algebraic[1] < '1' || algebraic[1] > '8') {
+        throw std::invalid_argument("Invalid algebraic square: " + algebraic);
+    }
     int file = algebraic[0] - 'a';
     int rank = 8 - (algebraic[1] - '0');
     return rank * 8 + file;
 }
 
 std::string ConvertToAlgebraic(const Move& move, const BoardPosition& position) {
-    // Convert from your internal move representation to algebraic notation
-    // Example: "P4840" → "a2a3" or "e4"
-    
     // Extract start and end positions
     int startPos = std::stoi(move.notation.substr(1, move.notation.length() - 3));
     int endPos = std::stoi(move.notation.substr(move.notation.length() - 2));
-    
+
     // Convert to algebraic coordinates
     std::string startSquare = IndexToAlgebraic(startPos);
     std::string endSquare = IndexToAlgebraic(endPos);
-    
+
     char piece = move.notation[0];
-    bool isCapture = position.boardState[endPos] != ' ' || move.isEnPassant;
-    
+    bool isWhite = isupper(piece);
+
+    // Check if the target square contains an opponent's piece
+    char target = position.boardState[endPos];
+    bool isOpponentPiece = (target != ' ' &&
+        ((isWhite && islower(target)) ||
+            (!isWhite && isupper(target))));
+
+    // Only mark as capture if it's a real capture or en passant
+    bool isCapture = isOpponentPiece || move.isEnPassant;
+
     // Build the algebraic notation
     std::string algebraic;
-    
+
     // Add piece letter (except for pawns)
     if (piece != 'P' && piece != 'p') {
         algebraic += toupper(piece);
     }
-    
+
     // Add the move coordinates
     algebraic += startSquare;
-    
+
     // Add capture symbol if needed
     if (isCapture) {
         algebraic += 'x';
     }
-    
+
     algebraic += endSquare;
-    
-    // Handle special cases like castling, promotion, etc.
-    
+
     return algebraic;
 }
 
@@ -1395,26 +1396,83 @@ std::string IndexToAlgebraic(int index) {
     return result;
 }
 
+void PrintBoard(const std::string& boardState) {
+    for (int r = 0; r < 8; ++r) {
+        for (int c = 0; c < 8; ++c) {
+            std::cout << boardState[r * 8 + c] << ' ';
+        }
+        std::cout << std::endl;
+    }
+}
+
+Move AlgebraicToInternalMove(const std::string& algebraicMove, const BoardPosition& position) {
+    // Only supports simple moves, not promotions/castling/en passant for now
+    int index = 0;
+    std::string from, to;
+    if (isupper(algebraicMove[0]) && !isdigit(algebraicMove[1])) {
+        index = 1;
+    }
+    from = algebraicMove.substr(index, 2);
+    if (algebraicMove.find('x') != std::string::npos) {
+        to = algebraicMove.substr(algebraicMove.find('x') + 1, 2);
+    } else {
+        to = algebraicMove.substr(from.length() + index, 2);
+    }
+    int fromIndex = AlgebraicToIndex(from);
+    int toIndex = AlgebraicToIndex(to);
+
+    // Use the actual piece on the board at the from square!
+    char piece = position.boardState[fromIndex];
+
+    std::string startPosStr = (fromIndex < 10) ? "0" + std::to_string(fromIndex) : std::to_string(fromIndex);
+    std::string endPosStr = (toIndex < 10) ? "0" + std::to_string(toIndex) : std::to_string(toIndex);
+    std::string notation = piece + startPosStr + endPosStr;
+    return { notation };
+}
+
 extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistoryStr, int maxDepth, bool isWhite)
 {
     std::string moveHistory(moveHistoryStr);
     BoardPosition currentPosition = ParseMoveHistory(moveHistory);
+
+    // Debug info
+    PrintBoard(currentPosition.boardState);
+
     Move bestMove;
-    
+
     // Starting time for time management
     auto startTime = std::chrono::high_resolution_clock::now();
     const int MAX_SEARCH_TIME_MS = 5000; // 5 seconds max search time
-    
+
     // Clear transposition table at the start of a new search
     for (auto& entry : transpositionTable) {
         entry = TTEntry();
     }
-    
+
+    // Generate all possible moves
+    std::vector<Move> allMoves = GenerateMoves(currentPosition, !currentPosition.whiteToMove);
+
+    // Filter out illegal moves that would leave the king in check
+    std::vector<Move> legalMoves;
+    for (const Move& move : allMoves) {
+        BoardPosition newPosition = ApplyMove(currentPosition, move);
+        // Make sure the move doesn't leave the king in check
+        if (!IsKingInCheck(newPosition, !currentPosition.whiteToMove)) {
+            legalMoves.push_back(move);
+        }
+    }
+
+    // If no legal moves, return an empty string
+    if (legalMoves.empty()) {
+        static std::string noMoveResult = "";
+        return noMoveResult.c_str();
+    }
+
     // Iterative deepening - start from depth 1 and increase
     for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++) {
         // Create the move tree from the current board position
-        MoveTreeNode* root = BuildMoveTree(currentPosition.boardState, 1, isWhite);
-        
+        MoveTreeNode* root = BuildMoveTree(currentPosition, 1, isWhite);
+
         // Find the best move using minimax on the tree at current depth
         int bestValue = -2147483647;
         Move currentBestMove;
@@ -1424,27 +1482,27 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
         for (MoveTreeNode* childNode : root->children) {
             // Use a full-window search for all moves at the root
             int moveValue = -MinimaxOnTree(childNode, currentDepth - 1, -2147483647, -bestValue, !isWhite);
-            
+
             if (moveValue > bestValue) {
                 bestValue = moveValue;
                 currentBestMove = childNode->move;
                 moveFound = true;
             }
         }
-        
+
         // Save the best move at this depth
         if (moveFound) {
             bestMove = currentBestMove;
-            
+
             // If we found a forced checkmate, no need to search deeper
             if (bestValue > 90000 || bestValue < -90000) {
                 break;
             }
         }
-        
+
         // Clean up the tree
         delete root;
-        
+
         // Check if we've spent too much time already
         auto currentTime = std::chrono::high_resolution_clock::now();
         auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - startTime).count();
@@ -1453,7 +1511,8 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
         }
     }
 
-    static std::string result = ConvertToAlgebraic(bestMove, currentPosition);
+    static std::string result;
+    result = ConvertToAlgebraic(bestMove, currentPosition);
     return result.c_str();
 }
 
@@ -1480,3 +1539,39 @@ void PrintMoveTree(MoveTreeNode* node, int depth = 0) {
         PrintMoveTree(child, depth + 1);
     }
 }
+
+/*
+int main() {
+    // Test 1: Generate moves for the starting position
+    BoardPosition startPosition;
+    startPosition.boardState = "rnbqkbnrpppppppp                                PPPPPPPPRNBQKBNR";
+    startPosition.whiteCanCastleKingside = true;
+    startPosition.whiteCanCastleQueenside = true;
+    startPosition.blackCanCastleKingside = true;
+    startPosition.blackCanCastleQueenside = true;
+    startPosition.enPassantTargetSquare = -1;
+    startPosition.halfMoveClock = 0;
+    startPosition.fullMoveNumber = 1;
+    startPosition.whiteToMove = true;
+
+    std::vector<Move> whiteMoves = GenerateMoves(startPosition, true);
+    std::cout << "White has " << whiteMoves.size() << " legal moves from the starting position." << std::endl;
+
+    // Test 2: Apply a move (e2 to e4)
+    Move move = { "P4840" };
+    BoardPosition afterMovePosition = ApplyMove(startPosition, move);
+    std::cout << "After e2-e4, board[40] = " << afterMovePosition.boardState[40]
+              << ", board[48] = " << afterMovePosition.boardState[48] << std::endl;
+
+    // Test 3: Get best move from starting position
+    const char* bestMove = GetBestMove("", 3, true);
+    std::cout << "Best move for white at depth 3: " << bestMove << std::endl;
+
+    // Test 4: Get best move after a couple of moves (e4 Nb8a6 d2d4)
+    const char* moveHistory = "e2e4 Nb8a6 d2d4";
+    const char* bestMoveAfter = GetBestMove(moveHistory, 3, false); // Black to move
+    std::cout << "Best move for black: " << bestMoveAfter << std::endl;
+
+    return 0;
+}
+*/

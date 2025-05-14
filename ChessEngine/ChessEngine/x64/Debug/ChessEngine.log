@@ -1,9 +1,16 @@
-﻿  ChessEngine.cpp
-C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(740,23): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
+﻿  pch.cpp
+  ChessEngine.cpp
+C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(87,1): warning C4010: single-line comment contains line-continuation character
   (compiling source file '/ChessEngine.cpp')
   
-C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(1166,17): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
+C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(730,23): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
   (compiling source file '/ChessEngine.cpp')
   
+C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(1141,17): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
+  (compiling source file '/ChessEngine.cpp')
+  
+  dllmain.cpp
+  Generating Code...
+  LINK : C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.dll not found or not built by the last incremental link; performing full link
      Creating library C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.lib and object C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.exp
   ChessEngine.vcxproj -> C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.dll
