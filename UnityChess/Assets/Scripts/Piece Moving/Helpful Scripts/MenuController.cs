@@ -10,24 +10,28 @@ namespace Piece_Moving.Helpful_Scripts
     [SerializeField] private Button playerVsPlayerButton;
     [SerializeField] private Button playButton;
     
-    [Header("Difficulty Selection")]
-    [SerializeField] private GameObject difficultyPanel;
+    [Header("Personality Selection")]
+    [SerializeField] private GameObject personalityPanel;
     [SerializeField] private Toggle playerAsWhiteToggle;
     
-    [SerializeField] private Button easyButton;
-    [SerializeField] private Button mediumButton;
-    [SerializeField] private Button hardButton;
-    private int selectedDifficulty = 3;
+    [SerializeField] private Button standardButton;
+    [SerializeField] private Button aggressiveButton;
+    [SerializeField] private Button positionalButton;
+    [SerializeField] private Button solidButton;
+    [SerializeField] private Button dynamicButton;
+    private ChessPersonality selectedPersonality = ChessPersonality.STANDARD;
     private bool vsComputer = true;
 
     private void Start()
     {
-        easyButton.onClick.AddListener(() => SetDifficulty(2));
-        mediumButton.onClick.AddListener(() => SetDifficulty(3));
-        hardButton.onClick.AddListener(() => SetDifficulty(5));
+        standardButton.onClick.AddListener(() => SetPersonality(ChessPersonality.STANDARD));
+        aggressiveButton.onClick.AddListener(() => SetPersonality(ChessPersonality.AGGRESSIVE));
+        positionalButton.onClick.AddListener(() => SetPersonality(ChessPersonality.POSITIONAL));
+        solidButton.onClick.AddListener(() => SetPersonality(ChessPersonality.SOLID));
+        dynamicButton.onClick.AddListener(() => SetPersonality(ChessPersonality.DYNAMIC));
     
-        // Highlight medium as default
-        UpdateDifficultyButtons();
+        // Highlight standard as default
+        UpdatePersonalityButtons();
         
         // Ensure GameSettingsManager exists
         if (GameSettingsManager.Instance == null)
@@ -42,31 +46,33 @@ namespace Piece_Moving.Helpful_Scripts
         playButton.onClick.AddListener(StartGame);
         
         // Initial state
-        difficultyPanel.SetActive(true);
+        personalityPanel.SetActive(true);
         playerVsComputerButton.GetComponent<Image>().color = Color.green;
         playerVsPlayerButton.GetComponent<Image>().color = Color.white;
     }
     
-    private void SetDifficulty(int depth)
+    private void SetPersonality(ChessPersonality personality)
     {
-        selectedDifficulty = depth;
-        UpdateDifficultyButtons();
+        selectedPersonality = personality;
+        UpdatePersonalityButtons();
     }
 
-    private void UpdateDifficultyButtons()
+    private void UpdatePersonalityButtons()
     {
         Color selectedColor = new Color(0.7f, 1f, 0.7f);
         Color normalColor = Color.white;
     
-        easyButton.GetComponent<Image>().color = selectedDifficulty == 2 ? selectedColor : normalColor;
-        mediumButton.GetComponent<Image>().color = selectedDifficulty == 3 ? selectedColor : normalColor;
-        hardButton.GetComponent<Image>().color = selectedDifficulty == 5 ? selectedColor : normalColor;
+        standardButton.GetComponent<Image>().color = selectedPersonality == ChessPersonality.STANDARD ? selectedColor : normalColor;
+        aggressiveButton.GetComponent<Image>().color = selectedPersonality == ChessPersonality.AGGRESSIVE ? selectedColor : normalColor;
+        positionalButton.GetComponent<Image>().color = selectedPersonality == ChessPersonality.POSITIONAL ? selectedColor : normalColor;
+        solidButton.GetComponent<Image>().color = selectedPersonality == ChessPersonality.SOLID ? selectedColor : normalColor;
+        dynamicButton.GetComponent<Image>().color = selectedPersonality == ChessPersonality.DYNAMIC ? selectedColor : normalColor;
     }
     
     private void SelectGameMode(bool vsComp)
     {
         vsComputer = vsComp;
-        difficultyPanel.SetActive(vsComp);
+        personalityPanel.SetActive(vsComp);
         
         // Visual feedback
         playerVsComputerButton.GetComponent<Image>().color = vsComp ? Color.green : Color.white;
@@ -82,8 +88,7 @@ namespace Piece_Moving.Helpful_Scripts
             // Set who plays as white
             GameSettingsManager.Instance.SetComputerSide(!playerAsWhiteToggle.isOn);
             
-            // You can add difficulty selection here
-            GameSettingsManager.Instance.SetDifficulty(selectedDifficulty);
+            GameSettingsManager.Instance.SetComputerPersonality(selectedPersonality);
         }
         
         GameSettingsManager.Instance.StartGame();

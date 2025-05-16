@@ -63,10 +63,13 @@ public class ChessGameManager : MonoBehaviour
     
     [DllImport("ChessEngine")]
     private static extern IntPtr GetBestMove(string movesHistory, int depth, bool isWhite);
+    [DllImport("ChessEngine")]
+    private static extern void SetEnginePersonality(int personalityType);
     private List<string> moveHistory = new List<string>();
     
     [SerializeField] private bool playAgainstComputer = true;
     [SerializeField] private bool computerPlaysBlack = true;
+    [SerializeField] private ChessPersonality computerPersonality = ChessPersonality.STANDARD;
     [SerializeField] private int computerSearchDepth = 3;
     
     private void Start()
@@ -75,9 +78,9 @@ public class ChessGameManager : MonoBehaviour
         {
             playAgainstComputer = GameSettingsManager.Instance.PlayAgainstComputer;
             computerPlaysBlack = !GameSettingsManager.Instance.ComputerPlaysWhite;
-            computerSearchDepth = GameSettingsManager.Instance.ComputerDifficulty;
+            computerPersonality = GameSettingsManager.Instance.ComputerPersonality;
         }
-        
+        SetEnginePersonality((int)computerPersonality);
         StartFunction();
         if (promotionPanel != null)
             promotionPanel.SetActive(false);

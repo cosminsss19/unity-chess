@@ -1,21 +1,28 @@
-﻿  ChessEngine.cpp
-C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(87,1): warning C4010: single-line comment contains line-continuation character
+﻿  pch.cpp
+  ChessEngine.cpp
+C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(101,1): warning C4010: single-line comment contains line-continuation character
   (compiling source file '/ChessEngine.cpp')
   
-C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(738,23): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
+C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(1029,23): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
   (compiling source file '/ChessEngine.cpp')
   
-C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(1118,18): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
+C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(1409,18): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
   (compiling source file '/ChessEngine.cpp')
   
-C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(1766,39): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
+C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(2057,39): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
   (compiling source file '/ChessEngine.cpp')
   
-C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(1767,39): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
+C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(2058,39): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
   (compiling source file '/ChessEngine.cpp')
   
-C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(2364,30): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
+C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(2823,57): warning C4267: '+=': conversion from 'size_t' to 'int', possible loss of data
   (compiling source file '/ChessEngine.cpp')
   
+C:\Users\Cosmin\Desktop\Licenta\ChessEngine\ChessEngine\ChessEngine.cpp(2948,30): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
+  (compiling source file '/ChessEngine.cpp')
+  
+  dllmain.cpp
+  Generating Code...
+  LINK : C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.dll not found or not built by the last incremental link; performing full link
      Creating library C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.lib and object C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.exp
-  ChessEngine.vcxproj -> C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.exe
+  ChessEngine.vcxproj -> C:\Users\Cosmin\Desktop\Licenta\ChessEngine\x64\Debug\ChessEngine.dll

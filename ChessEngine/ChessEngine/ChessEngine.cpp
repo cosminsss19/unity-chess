@@ -83,6 +83,20 @@ const int TT_BETA = 2;       // Lower bound
 const int MAX_PLY = 64;  // Maximum search depth
 Move killerMoves[MAX_PLY][2] = {};  // Initialize to empty moves
 
+// --- Start of Chess Personalities Settings --- \\
+// At the top of your file with other global variables
+enum ChessPersonality {
+    STANDARD = 0,
+    AGGRESSIVE = 1,
+    POSITIONAL = 2, 
+    SOLID = 3,
+    DYNAMIC = 4
+};
+
+// Default personality
+ChessPersonality currentPersonality = STANDARD;
+// --- End of Chess Personalities Settings --- \\
+
 // ---------------------------- Start of Function declarations ---------------------------- \\
 void StoreKillerMove(const Move& move, int ply);
 bool IsKiller(const Move& move, int ply);
@@ -96,6 +110,10 @@ void ExpandNode(MoveTreeNode* node, int depth, bool isWhiteTurn, const BoardPosi
 void OrderMoves(std::vector<Move>& moves, int ply, const std::string& boardState, const Move& ttMove = Move());
 int GetPieceValue(char piece);
 int Quiescence(const BoardPosition& position, int alpha, int beta, bool maximizingPlayer, int maxDepth);
+bool IsGoodCapture(const BoardPosition& position, const Move& move);
+bool IsSquareAttacked(const BoardPosition& position, int square, bool byWhite);
+int GetCheapestAttackerValue(const BoardPosition& position, int square, bool byWhite);
+bool HasMaterialThreat(const BoardPosition& position, bool forWhite);
 int MinimaxOnTree(MoveTreeNode* node, int depth, int alpha, int beta, bool maximizingPlayer, bool allowNullMove = true);
 bool IsCapture(const std::string& boardState, const Move& move);
 bool IsCheck(const BoardPosition& position, const Move& move);
@@ -117,14 +135,19 @@ void GenerateRookMoves(const std::string& boardState, int row, int col, int pos,
     bool isWhite, std::vector<Move>& moves, char actualPiece = '\0');
 void GenerateKingMoves(const std::string& boardState, int row, int col, int pos,
     bool isWhite, std::vector<Move>& moves, const BoardPosition& position, bool skipCastlingCheck = false);
-int EvaluateBoard(const BoardPosition& position);
+int EvaluateBoard(const BoardPosition& position, int searchDepth = 0);
 BoardPosition ParseMoveHistory(const std::string& moveHistory);
 BoardPosition ApplyAlgebraicMove(const BoardPosition& position, const std::string& algebraicMove);
 int AlgebraicToIndex(const std::string& algebraic);
+std::string ConvertToAlgebraic(const Move& move, const BoardPosition& position);
 std::string IndexToAlgebraic(int index);
 Move AlgebraicToInternalMove(const std::string& algebraicMove, const BoardPosition& position);
 void PrintBoard(const std::string& boardState);
 int EvaluateOpeningPrinciples(const BoardPosition& position);
+int ApplyPersonalityToEvaluation(int baseScore, const BoardPosition& position, 
+                               const std::vector<Move>* preCalculatedMoves,
+                               bool fullCalculation = true);
+bool IsMoveSafe(const BoardPosition& position, const Move& move); 
 // ---------------------------- End of Function declarations ---------------------------- \\
 
 // Store a killer move
@@ -276,14 +299,32 @@ void OrderMoves(std::vector<Move>& moves, int ply, const std::string& boardState
         if (!ttMove.notation.empty() && move.notation == ttMove.notation) {
             score = 20000;
         }
-        // 2. Captures (MVV-LVA: Most Valuable Victim - Least Valuable Aggressor)
-        else if (!move.notation.empty() && move.notation.length() >= 3) {
-            int endPos = std::stoi(move.notation.substr(move.notation.length() - 2));
+        // 2. Good captures (MVV-LVA)
+        else if (move.notation.length() >= 5) {
+            int endPos = std::stoi(move.notation.substr(3, 2));
             char victim = boardState[endPos];
-            char aggressor = move.notation[0];
             
-            if (victim != ' ') {
-                score = 10000 + GetPieceValue(victim) * 10 - GetPieceValue(aggressor);
+            if (victim != ' ' || move.isEnPassant) {
+                // Create a temporary position to check if this is a good capture
+                BoardPosition tempPos;
+                tempPos.boardState = boardState;
+                
+                if (IsGoodCapture(tempPos, move)) {
+                    int captureScore = 10000;
+                    
+                    // MVV-LVA scoring
+                    if (victim != ' ') {
+                        char attacker = move.notation[0];
+                        captureScore += GetPieceValue(victim) * 100 - GetPieceValue(attacker);
+                    } else if (move.isEnPassant) {
+                        captureScore += 100; // En passant captures a pawn
+                    }
+                    
+                    score = captureScore;
+                } else {
+                    // Bad captures should be examined after quiet moves
+                    score = -100;
+                }
             }
         }
         // 3. Killer moves
@@ -324,71 +365,352 @@ int GetPieceValue(char piece) {
 }
 
 int Quiescence(const BoardPosition& position, int alpha, int beta, bool maximizingPlayer, int maxDepth) {
-    // Base evaluation
-    int standPat = EvaluateBoard(position);
+    ChessPersonality savedPersonality = currentPersonality;
+    if (maxDepth <= 3) currentPersonality = STANDARD; // Use standard for very deep quiescence
+    
+    // Base evaluation - ALWAYS EVALUATE FIRST
+    int standPat = EvaluateBoard(position, -maxDepth);  // Pass negative depth to ensure light evaluation
 
-    // Return immediately if we've reached maximum quiescence depth
-    if (maxDepth <= 0) {
-        return standPat;
+    // Restore personality before returning
+    currentPersonality = savedPersonality;
+    
+    // IMPORTANT: Always check if this position is good enough to cause a cutoff
+    if (maximizingPlayer) {
+        if (standPat >= beta) return beta;
+        if (standPat > alpha) alpha = standPat;
+    } else {
+        if (standPat <= alpha) return alpha;
+        if (standPat < beta) beta = standPat;
     }
-
-    // Beta cutoff
-    if (standPat >= beta) {
-        return beta;
-    }
-
-    // Update alpha
-    if (alpha < standPat) {
-        alpha = standPat;
-    }
-
-    // Generate only capture moves
-    std::vector<Move> captureMoves;
+    
+    // Return immediately at max depth
+    if (maxDepth <= 0) return standPat;
+    
+    // Generate and sort ONLY capture moves
     std::vector<Move> allMoves = GenerateMoves(position, maximizingPlayer);
-
-    // Filter to only keep captures
+    std::vector<std::pair<int, Move>> scoredCaptures;
+    
     for (const Move& move : allMoves) {
         int endPos = std::stoi(move.notation.substr(move.notation.length() - 2));
         char target = position.boardState[endPos];
+        
+        // Only consider captures
         if (target != ' ' || move.isEnPassant) {
-            captureMoves.push_back(move);
+            // Score the capture with MVV-LVA
+            int score = 0;
+            if (target != ' ') {
+                int victimValue = GetPieceValue(target) * 10;
+                int attackerValue = GetPieceValue(move.notation[0]);
+                score = victimValue - attackerValue;
+            } else if (move.isEnPassant) {
+                score = 10; // Pawn value for en passant
+            }
+            scoredCaptures.push_back({score, move});
         }
     }
-
-    // If no captures are available, return the stand pat score
-    if (captureMoves.empty()) {
-        return standPat;
-    }
-
+    
+    // Sort captures by MVV-LVA
+    std::sort(scoredCaptures.begin(), scoredCaptures.end(),
+        [](const auto& a, const auto& b) { return a.first > b.first; });
+    
     // Recursively search capture sequences
-    if (maximizingPlayer) {
-        for (const Move& move : captureMoves) {
-            BoardPosition newPosition = ApplyMove(position, move);
-            int score = Quiescence(newPosition, alpha, beta, false, maxDepth - 1);
-            if (score >= beta) {
-                return beta;
-            }
-            if (score > alpha) {
-                alpha = score;
-            }
+    for (const auto& [score, move] : scoredCaptures) {
+        BoardPosition newPosition = ApplyMove(position, move);
+        int evalScore = -Quiescence(newPosition, -beta, -alpha, !maximizingPlayer, maxDepth - 1);
+        
+        if (maximizingPlayer) {
+            if (evalScore >= beta) return beta;
+            if (evalScore > alpha) alpha = evalScore;
+        } else {
+            if (evalScore <= alpha) return alpha;
+            if (evalScore < beta) beta = evalScore;
         }
-        return alpha;
-    } else {
-        for (const Move& move : captureMoves) {
-            BoardPosition newPosition = ApplyMove(position, move);
-            int score = Quiescence(newPosition, alpha, beta, true, maxDepth - 1);
-            if (score <= alpha) {
-                return alpha;
-            }
-            if (score < beta) {
-                beta = score;
-            }
-        }
-        return beta;
     }
+    
+    return maximizingPlayer ? alpha : beta;
+}
+
+// Comprehensive Static Exchange Evaluation
+bool IsGoodCapture(const BoardPosition& position, const Move& move) {
+    if (move.notation.length() < 5) return false;
+    
+    int startPos = std::stoi(move.notation.substr(1, 2));
+    int endPos = std::stoi(move.notation.substr(3, 2));
+    
+    char attacker = position.boardState[startPos];
+    char victim = position.boardState[endPos];
+    
+    if (victim == ' ' && !move.isEnPassant) return false;
+    
+    int attackerValue = GetPieceValue(attacker);
+    int victimValue = move.isEnPassant ? 1 : GetPieceValue(victim);
+    
+    // Apply the move to get resulting position
+    BoardPosition afterCapture = ApplyMove(position, move);
+    
+    // Generate ALL possible responses by the opponent
+    std::vector<Move> responses = GenerateMoves(afterCapture, !position.whiteToMove);
+    
+    // Check if any response recaptures our piece
+    for (const Move& response : responses) {
+        if (response.notation.length() >= 5) {
+            int responseTargetPos = std::stoi(response.notation.substr(3, 2));
+            
+            // If any response can recapture on the same square
+            if (responseTargetPos == endPos) {
+                char recapturer = response.notation[0];
+                int recapturerValue = GetPieceValue(recapturer);
+                
+                // If the recapturing piece is less valuable than our attacker, this is a bad capture
+                if (recapturerValue <= attackerValue) {
+                    std::cout << "Bad exchange detected: " << ConvertToAlgebraic(move, position)
+                              << " would lose material after recapture with " 
+                              << ConvertToAlgebraic(response, afterCapture) << std::endl;
+                    return false;
+                }
+            }
+        }
+    }
+    
+    // If capturing piece is worth MORE than the captured piece, it's usually bad
+    // unless there's a special reason (like removing a defender or creating a passed pawn)
+    if (victimValue < attackerValue) {
+        // Check for tactical compensation:
+        
+        // 1. Check if this removes a defender of another piece we can then capture
+        bool createsNewThreat = false;
+        for (int i = 0; i < 64; i++) {
+            if (i == endPos) continue; // Skip the capture square
+            
+            char targetPiece = afterCapture.boardState[i];
+            bool isEnemyPiece = (position.whiteToMove && islower(targetPiece) && targetPiece != ' ') ||
+                               (!position.whiteToMove && isupper(targetPiece) && targetPiece != ' ');
+            
+            if (isEnemyPiece) {
+                // Check if this piece was defended before but now isn't
+                bool wasDefended = IsSquareAttacked(position, i, !position.whiteToMove);
+                bool isStillDefended = IsSquareAttacked(afterCapture, i, !position.whiteToMove);
+                
+                if (wasDefended && !isStillDefended && 
+                    GetPieceValue(targetPiece) >= attackerValue) {
+                    createsNewThreat = true;
+                    break;
+                }
+            }
+        }
+        
+        // Only return true if we found some tactical compensation
+        return createsNewThreat;
+    }
+    
+    return true; // Default to true for equal or favorable captures with no immediate recapture
+}
+
+// Helper functions for the above
+bool IsSquareAttacked(const BoardPosition& position, int square, bool byWhite) {
+    for (int i = 0; i < 64; i++) {
+        char attacker = position.boardState[i];
+        if (attacker == ' ') continue;
+        
+        bool isWhitePiece = isupper(attacker);
+        if (byWhite != isWhitePiece) continue;
+        
+        // Check if this piece can attack the target square
+        switch (tolower(attacker)) {
+            case 'p': {
+                int rank = i / 8;
+                int file = i % 8;
+                int targetRank = square / 8;
+                int targetFile = square % 8;
+                
+                if (isWhitePiece) {
+                    // White pawn captures diagonally up
+                    if (rank - 1 == targetRank && 
+                        (file - 1 == targetFile || file + 1 == targetFile)) {
+                        return true;
+                    }
+                } else {
+                    // Black pawn captures diagonally down
+                    if (rank + 1 == targetRank && 
+                        (file - 1 == targetFile || file + 1 == targetFile)) {
+                        return true;
+                    }
+                }
+                break;
+            }
+            case 'n': {
+                int rank = i / 8;
+                int file = i % 8;
+                int targetRank = square / 8;
+                int targetFile = square % 8;
+                
+                int rankDiff = std::abs(rank - targetRank);
+                int fileDiff = std::abs(file - targetFile);
+                
+                if ((rankDiff == 1 && fileDiff == 2) || (rankDiff == 2 && fileDiff == 1)) {
+                    return true;
+                }
+                break;
+            }
+            case 'b': {
+                int rank = i / 8;
+                int file = i % 8;
+                int targetRank = square / 8;
+                int targetFile = square % 8;
+                
+                int rankDiff = targetRank - rank;
+                int fileDiff = targetFile - file;
+                
+                // Check if on same diagonal
+                if (std::abs(rankDiff) == std::abs(fileDiff)) {
+                    int rankStep = (rankDiff > 0) ? 1 : ((rankDiff < 0) ? -1 : 0);
+                    int fileStep = (fileDiff > 0) ? 1 : ((fileDiff < 0) ? -1 : 0);
+                    
+                    bool blocked = false;
+                    for (int r = rank + rankStep, f = file + fileStep; 
+                         r != targetRank || f != targetFile; 
+                         r += rankStep, f += fileStep) {
+                        if (position.boardState[r*8+f] != ' ') {
+                            blocked = true;
+                            break;
+                        }
+                    }
+                    if (!blocked) return true;
+                }
+                break;
+            }
+            case 'r': {
+                int rank = i / 8;
+                int file = i % 8;
+                int targetRank = square / 8;
+                int targetFile = square % 8;
+                
+                // Check if on same rank or file
+                if (rank == targetRank || file == targetFile) {
+                    int rankStep = (rank == targetRank) ? 0 : ((targetRank > rank) ? 1 : -1);
+                    int fileStep = (file == targetFile) ? 0 : ((targetFile > file) ? 1 : -1);
+                    
+                    bool blocked = false;
+                    for (int r = rank + rankStep, f = file + fileStep; 
+                         r != targetRank || f != targetFile; 
+                         r += rankStep, f += fileStep) {
+                        if (position.boardState[r*8+f] != ' ') {
+                            blocked = true;
+                            break;
+                        }
+                    }
+                    if (!blocked) return true;
+                }
+                break;
+            }
+            case 'q': {
+                int rank = i / 8;
+                int file = i % 8;
+                int targetRank = square / 8;
+                int targetFile = square % 8;
+                
+                int rankDiff = targetRank - rank;
+                int fileDiff = targetFile - file;
+                
+                // Check if on same rank, file or diagonal
+                if (rank == targetRank || file == targetFile || std::abs(rankDiff) == std::abs(fileDiff)) {
+                    int rankStep = (rank == targetRank) ? 0 : ((targetRank > rank) ? 1 : -1);
+                    int fileStep = (file == targetFile) ? 0 : ((targetFile > file) ? 1 : -1);
+                    
+                    bool blocked = false;
+                    for (int r = rank + rankStep, f = file + fileStep; 
+                         r != targetRank || f != targetFile; 
+                         r += rankStep, f += fileStep) {
+                        if (position.boardState[r*8+f] != ' ') {
+                            blocked = true;
+                            break;
+                        }
+                    }
+                    if (!blocked) return true;
+                }
+                break;
+            }
+            case 'k': {
+                int rank = i / 8;
+                int file = i % 8;
+                int targetRank = square / 8;
+                int targetFile = square % 8;
+                
+                int rankDiff = std::abs(rank - targetRank);
+                int fileDiff = std::abs(file - targetFile);
+                
+                if (rankDiff <= 1 && fileDiff <= 1) {
+                    return true;
+                }
+                break;
+            }
+        }
+    }
+    return false;
+}
+
+int GetCheapestAttackerValue(const BoardPosition& position, int square, bool byWhite) {
+    int cheapestValue = 10000; // Higher than any piece value
+    
+    for (int i = 0; i < 64; i++) {
+        char attacker = position.boardState[i];
+        if (attacker == ' ') continue;
+        
+        bool isWhitePiece = isupper(attacker);
+        if (byWhite != isWhitePiece) continue;
+        
+        // Check if this piece can attack the target square
+        // (using same logic as IsSquareAttacked, but condensed)
+        bool canAttack = false;
+        int rank = i / 8;
+        int file = i % 8;
+        int targetRank = square / 8;
+        int targetFile = square % 8;
+        
+        switch (tolower(attacker)) {
+            case 'p': {
+                if ((isWhitePiece && rank - 1 == targetRank && 
+                     (file - 1 == targetFile || file + 1 == targetFile)) ||
+                    (!isWhitePiece && rank + 1 == targetRank && 
+                     (file - 1 == targetFile || file + 1 == targetFile))) {
+                    canAttack = true;
+                }
+                break;
+            }
+            // Similar checks for other pieces...
+            // (implementation abbreviated for clarity)
+        }
+        
+        if (canAttack) {
+            int value = GetPieceValue(attacker);
+            if (value < cheapestValue) cheapestValue = value;
+        }
+    }
+    
+    return cheapestValue;
+}
+
+bool HasMaterialThreat(const BoardPosition& position, bool forWhite) {
+    // Generate opponent's moves
+    std::vector<Move> opponentMoves = GenerateMoves(position, !forWhite);
+    
+    // Check if any move is a capture of a high-value piece
+    for (const Move& move : opponentMoves) {
+        int endPos = std::stoi(move.notation.substr(move.notation.length() - 2));
+        char target = position.boardState[endPos];
+        
+        // Check if capturing a valuable piece (knight or better)
+        if ((forWhite && islower(target) && tolower(target) != 'p') ||
+            (!forWhite && isupper(target) && toupper(target) != 'P')) {
+            return true;
+        }
+    }
+    
+    return false;
 }
 
 // Enhanced MinimaxOnTree with move ordering and quiescence search
+// Enhanced MinimaxOnTree with blunder detection
 int MinimaxOnTree(MoveTreeNode* node, int depth, int alpha, int beta, bool maximizingPlayer, bool allowNullMove) {
     // If node is already evaluated, return its score
     if (node->isEvaluated) {
@@ -398,170 +720,142 @@ int MinimaxOnTree(MoveTreeNode* node, int depth, int alpha, int beta, bool maxim
     // Try the transposition table first
     Move ttMove;
     int ttScore;
-
     if (ProbeTranspositionTable(node->boardState, depth, alpha, beta, ttScore, ttMove)) {
         return ttScore;
     }
 
     // If at max depth, use quiescence search
-    if (depth == 0) {
-        // You need a full BoardPosition for quiescence
+    if (depth <= 0) {
         BoardPosition tempPosition;
         tempPosition.boardState = node->boardState;
-        // If you store more state in the node, set it here!
+        ChessPersonality savedPersonality = currentPersonality;
+        if (depth < -2) currentPersonality = STANDARD;
         node->evaluation = Quiescence(tempPosition, alpha, beta, maximizingPlayer, 8);
+        currentPersonality = savedPersonality;
         node->isEvaluated = true;
-
-        // Store in transposition table
-        int flag = (node->evaluation <= alpha) ? TT_ALPHA :
+        
+        int flag = (node->evaluation <= alpha) ? TT_ALPHA : 
                   ((node->evaluation >= beta) ? TT_BETA : TT_EXACT);
         StoreTranspositionTable(node->boardState, depth, flag, node->evaluation, Move());
-
         return node->evaluation;
     }
 
-    // Null move pruning
-    {
-        BoardPosition tempPosition;
-        tempPosition.boardState = node->boardState;
-        // Set other fields if you store them in the node
-        if (allowNullMove && depth >= 3 && !IsKingInCheck(tempPosition, maximizingPlayer)) {
-            int R = 2 + depth / 6; // Adaptive reduction
-            int nullMoveScore = -MinimaxOnTree(node, depth - 1 - R, -beta, -beta + 1, !maximizingPlayer, false);
-
-            if (nullMoveScore >= beta) {
-                if (depth >= 5) {
-                    int verificationScore = MinimaxOnTree(node, depth - 4, alpha, beta, maximizingPlayer, false);
-                    if (verificationScore >= beta)
-                        return beta;
-                } else {
-                    return beta;
-                }
-            }
-        }
-    }
-
-    // If leaf node, expand it
+    // Expand the node if needed
     if (node->children.empty()) {
         BoardPosition tempPosition;
         tempPosition.boardState = node->boardState;
-        // Set other fields if you store them in the node
         ExpandNode(node, 1, maximizingPlayer, tempPosition);
+        
         if (node->children.empty()) {
-            // If still no children after expansion, evaluate the position
             bool isInCheck = IsKingInCheck(tempPosition, maximizingPlayer);
-            if (isInCheck) {
-                node->evaluation = maximizingPlayer ? -100000 + depth * 100 : 100000 - depth * 100;
-            } else {
-                node->evaluation = 0;
-            }
+            node->evaluation = isInCheck ? 
+                (maximizingPlayer ? -100000 + depth * 100 : 100000 - depth * 100) : 0;
             node->isEvaluated = true;
             return node->evaluation;
         }
     }
 
-    // Order moves to improve alpha-beta pruning efficiency
+    // Order moves for better pruning
     std::vector<Move> moves;
     for (const auto& child : node->children) {
         moves.push_back(child->move);
     }
     OrderMoves(moves, depth, node->boardState, ttMove);
 
+    // Use a consistent negamax approach (always trying to maximize)
+    int bestValue = -2147483647;
     Move bestMove;
     int nodeFlag = TT_ALPHA;
 
-    if (maximizingPlayer) {
-        int maxEval = -2147483647;
+    // Construct a temporary position for blunder checking
+    BoardPosition currentPosition;
+    currentPosition.boardState = node->boardState;
+    currentPosition.whiteToMove = maximizingPlayer;
 
-        for (int i = 0; i < node->children.size(); i++) {
-            MoveTreeNode* childNode = node->children[i];
-
-            // Reconstruct BoardPosition for the child
-            BoardPosition tempPosition;
-            tempPosition.boardState = childNode->boardState;
-            // Set other fields if you store them in the node
-
-            int eval;
-            // Late Move Reduction (LMR)
-            if (i >= 3 && depth >= 3 && !IsCapture(tempPosition.boardState, childNode->move) && !IsCheck(tempPosition, childNode->move)) {
-                int R = 1 + customMin(depth / 3, 3) + customMin(i / 6, 2);
-                eval = -MinimaxOnTree(childNode, depth - 1 - R, -alpha - 1, -alpha, false);
-
-                if (eval > alpha && eval < beta) {
-                    eval = -MinimaxOnTree(childNode, depth - 1, -beta, -alpha, false);
-                }
-            } else {
-                eval = -MinimaxOnTree(childNode, depth - 1, -beta, -alpha, false);
+    for (int i = 0; i < node->children.size(); i++) {
+        MoveTreeNode* childNode = node->children[i];
+        BoardPosition tempPosition;
+        tempPosition.boardState = childNode->boardState;
+        
+        // CRITICAL ADDITION: Check for tactical blunders
+        // If this move hangs a piece, assign a terrible score without searching deeper
+        if (!IsCapture(tempPosition.boardState, childNode->move) && 
+            !IsMoveSafe(currentPosition, childNode->move)) {
+            
+            // Assign a severely bad score for hanging a piece
+            // but not as bad as checkmate so the engine picks the "least bad" option
+            int blunderScore = maximizingPlayer ? -5000 : 5000;
+            
+            // Log detection of blunder
+            if (depth >= 3) {  // Only log for significant depths
+                std::string moveText = ConvertToAlgebraic(childNode->move, currentPosition);
+                std::cout << "Detected blunder: " << moveText << " at depth " << depth << std::endl;
             }
-
-            maxEval = customMax(maxEval, eval);
-
-            if (maxEval > alpha) {
-                alpha = maxEval;
+            
+            // Skip deep search for this clearly bad move
+            childNode->evaluation = blunderScore;
+            childNode->isEvaluated = true;
+            
+            // We still need to consider this move in our best value calculation
+            // but it will almost certainly be rejected unless all moves are blunders
+            int eval = -blunderScore;
+            
+            if (eval > bestValue) {
+                bestValue = eval;
                 bestMove = childNode->move;
+                
+                if (bestValue > alpha) {
+                    alpha = bestValue;
+                    nodeFlag = TT_EXACT;
+                    
+                    if (alpha >= beta) {
+                        nodeFlag = TT_BETA;
+                        break;
+                    }
+                }
+            }
+            
+            // Skip normal search for this bad move
+            continue;
+        }
+        
+        int eval;
+        // Late Move Reduction
+        if (i >= 3 && depth >= 3 && !IsCapture(tempPosition.boardState, childNode->move) && !IsCheck(tempPosition, childNode->move)) {
+            int R = 1 + customMin(depth / 3, 3) + customMin(i / 6, 2);
+            eval = -MinimaxOnTree(childNode, depth - 1 - R, -beta, -alpha, !maximizingPlayer, false);
+            
+            if (eval > alpha && eval < beta) {
+                eval = -MinimaxOnTree(childNode, depth - 1, -beta, -alpha, !maximizingPlayer, false);
+            }
+        } else {
+            eval = -MinimaxOnTree(childNode, depth - 1, -beta, -alpha, !maximizingPlayer, false);
+        }
+        
+        if (eval > bestValue) {
+            bestValue = eval;
+            bestMove = childNode->move;
+            
+            if (bestValue > alpha) {
+                alpha = bestValue;
                 nodeFlag = TT_EXACT;
-
+                
                 if (!IsCapture(tempPosition.boardState, childNode->move)) {
                     StoreKillerMove(childNode->move, depth);
                 }
-            }
-
-            if (beta <= alpha) {
-                nodeFlag = TT_BETA;
-                break;
-            }
-        }
-
-        node->evaluation = maxEval;
-        node->isEvaluated = true;
-        StoreTranspositionTable(node->boardState, depth, nodeFlag, maxEval, bestMove);
-        return maxEval;
-    } else {
-        int minEval = 2147483647;
-
-        for (int i = 0; i < node->children.size(); i++) {
-            MoveTreeNode* childNode = node->children[i];
-
-            // Reconstruct BoardPosition for the child
-            BoardPosition tempPosition;
-            tempPosition.boardState = childNode->boardState;
-            // Set other fields if you store them in the node
-
-            int eval;
-            if (i >= 3 && depth >= 3 && !IsCapture(tempPosition.boardState, childNode->move) && !IsCheck(tempPosition, childNode->move)) {
-                int R = 1 + customMin(depth / 3, 3) + customMin(i / 6, 2);
-                eval = -MinimaxOnTree(childNode, depth - 1 - R, -beta, -alpha, true);
-
-                if (eval > alpha && eval < beta) {
-                    eval = -MinimaxOnTree(childNode, depth - 1, -beta, -alpha, true);
-                }
-            } else {
-                eval = -MinimaxOnTree(childNode, depth - 1, -beta, -alpha, true);
-            }
-
-            minEval = customMin(minEval, eval);
-
-            if (minEval < beta) {
-                beta = minEval;
-                bestMove = childNode->move;
-                nodeFlag = TT_EXACT;
-
-                if (!IsCapture(tempPosition.boardState, childNode->move)) {
-                    StoreKillerMove(childNode->move, depth);
+                
+                if (alpha >= beta) {
+                    nodeFlag = TT_BETA;
+                    break;
                 }
             }
-
-            if (beta <= alpha) {
-                nodeFlag = TT_ALPHA;
-                break;
-            }
         }
-
-        node->evaluation = minEval;
-        node->isEvaluated = true;
-        StoreTranspositionTable(node->boardState, depth, nodeFlag, minEval, bestMove);
-        return minEval;
     }
+    
+    node->evaluation = bestValue;
+    node->isEvaluated = true;
+    StoreTranspositionTable(node->boardState, depth, nodeFlag, bestValue, bestMove);
+    return bestValue;
 }
 
 // Check if a move is a capture
@@ -626,9 +920,6 @@ bool IsDraw(const std::string& boardState) {
     
     return false;
 }
-
-// Forward declaration for the EvaluateBoard function
-int EvaluateBoard(const BoardPosition& position);
 
 // Apply a move to the board and return the new board state
 BoardPosition ApplyMove(const BoardPosition& position, const Move& move) {
@@ -780,7 +1071,7 @@ std::vector<Move> GenerateMoves(const BoardPosition& position, bool isWhite, boo
 
 int Minimax(const BoardPosition& position, int depth, int alpha, int beta, bool maximizingPlayer) {
     if (depth == 0) {
-        return EvaluateBoard(position);
+        return EvaluateBoard(position, 0);
     }
 
     std::vector<Move> moves = GenerateMoves(position, maximizingPlayer);
@@ -1073,7 +1364,7 @@ void GenerateKingMoves(const std::string& boardState, int row, int col, int pos,
     }
 }
 
-int EvaluateBoard(const BoardPosition& position) {
+int EvaluateBoard(const BoardPosition& position, int searchDepth) {
     const std::string& boardState = position.boardState;
     const int BOARD_SIZE = 8;
     int score = 0;
@@ -1785,7 +2076,23 @@ int EvaluateBoard(const BoardPosition& position) {
     if (IsKingInCheck(position, true)) {
         score -= 50; // Penalty for white king being in check
     }
-    
+
+    // Apply personality adjustments at the end
+    if (currentPersonality != STANDARD) {
+        // Skip expensive personality evaluations in deep search
+        bool useFullPersonality = (searchDepth <= 2);
+        
+        std::vector<Move>* movesToPass = nullptr;
+        // Only generate moves for shallow searches
+        if (useFullPersonality && (currentPersonality == AGGRESSIVE || currentPersonality == DYNAMIC)) {
+            static std::vector<Move> currentMoves;
+            currentMoves = GenerateMoves(position, position.whiteToMove);
+            movesToPass = &currentMoves;
+        }
+        
+        // Pass the depth information to let the function know how much work to do
+        score = ApplyPersonalityToEvaluation(score, position, movesToPass, useFullPersonality);
+    }
     return score;
 }
 
@@ -1922,15 +2229,29 @@ int AlgebraicToIndex(const std::string& algebraic) {
 }
 
 std::string ConvertToAlgebraic(const Move& move, const BoardPosition& position) {
+    if (move.notation.length() < 5) {
+        // Return a safe default value for invalid moves
+        return "error";
+    }
+    
     // Extract start and end positions
-    int startPos = std::stoi(move.notation.substr(1, move.notation.length() - 3));
-    int endPos = std::stoi(move.notation.substr(move.notation.length() - 2));
+    int startPos;
+    int endPos;
+    
+    try {
+        startPos = std::stoi(move.notation.substr(1, move.notation.length() > 3 ? move.notation.length() - 3 : 1));
+        endPos = std::stoi(move.notation.substr(move.notation.length() - 2, 2));
+    } catch (const std::exception& e) {
+        // If parsing fails, return a safe value
+        std::cerr << "Error parsing move notation: " << move.notation << " - " << e.what() << std::endl;
+        return "error";
+    }
 
     // Convert to algebraic coordinates
     std::string startSquare = IndexToAlgebraic(startPos);
     std::string endSquare = IndexToAlgebraic(endPos);
 
-    char piece = move.notation[0];
+    char piece = !move.notation.empty() ? move.notation[0] : 'P';
     bool isWhite = isupper(piece);
 
     // Check if the target square contains an opponent's piece
@@ -1984,6 +2305,10 @@ void PrintBoard(const std::string& boardState) {
 }
 
 Move AlgebraicToInternalMove(const std::string& algebraicMove, const BoardPosition& position) {
+    if (algebraicMove.empty()) {
+        throw std::invalid_argument("Empty move string provided");
+    }
+    
     // Handle castling
     if (algebraicMove == "O-O" || algebraicMove == "0-0") {
         Move move;
@@ -1996,46 +2321,76 @@ Move AlgebraicToInternalMove(const std::string& algebraicMove, const BoardPositi
         Move move;
         move.isCastling = true;
         move.isKingsideCastling = false;
-        move.notation = (position.whiteToMove ? "K" : "k") + std::string(position.whiteToMove ? "6062" : "0402");
+        move.notation = (position.whiteToMove ? "K" : "k") + std::string(position.whiteToMove ? "6058" : "0402");
         return move;
     }
 
-    // Handle promotion (e.g., e7e8Q or e7e8=Q)
-    std::string moveStr = algebraicMove;
-    char promotion = '\0';
-    size_t promoPos = moveStr.find('=');
-    if (promoPos != std::string::npos) {
-        promotion = moveStr[promoPos + 1];
-        moveStr = moveStr.substr(0, promoPos);
-    } else if (moveStr.length() == 5 && isalpha(moveStr[4])) {
-        promotion = moveStr[4];
-        moveStr = moveStr.substr(0, 4);
+    // IMPORTANT CHANGE: Detect notation style and parse accordingly
+    // Case 1: Piece + coordinate notation (e.g. Nb8c6)
+    if (algebraicMove.length() >= 5 && isalpha(algebraicMove[0]) && 
+        !isdigit(algebraicMove[1]) && isalpha(algebraicMove[1])) {
+        
+        char piece = algebraicMove[0];
+        std::string from = algebraicMove.substr(1, 2);
+        std::string to = algebraicMove.substr(3, 2);
+        
+        try {
+            int fromIndex = AlgebraicToIndex(from);
+            int toIndex = AlgebraicToIndex(to);
+            
+            Move move;
+            std::string startPosStr = (fromIndex < 10) ? "0" + std::to_string(fromIndex) : std::to_string(fromIndex);
+            std::string endPosStr = (toIndex < 10) ? "0" + std::to_string(toIndex) : std::to_string(toIndex);
+            move.notation = piece + startPosStr + endPosStr;
+            
+            return move;
+        } catch (const std::exception& e) {
+            throw std::invalid_argument("Error parsing piece notation: " + algebraicMove + " - " + e.what());
+        }
     }
-
-    // Parse from and to squares
-    std::string from = moveStr.substr(0, 2);
-    std::string to = moveStr.substr(2, 2);
-    int fromIndex = AlgebraicToIndex(from);
-    int toIndex = AlgebraicToIndex(to);
-    char piece = position.boardState[fromIndex];
-
-    Move move;
-    std::string startPosStr = (fromIndex < 10) ? "0" + std::to_string(fromIndex) : std::to_string(fromIndex);
-    std::string endPosStr = (toIndex < 10) ? "0" + std::to_string(toIndex) : std::to_string(toIndex);
-    move.notation = piece + startPosStr + endPosStr;
-
-    // Handle en passant
-    if ((tolower(piece) == 'p') && (fromIndex % 8 != toIndex % 8) && position.boardState[toIndex] == ' ') {
-        move.isEnPassant = true;
-        move.enPassantCapturePos = position.whiteToMove ? (toIndex + 8) : (toIndex - 8);
+    // Case 2: Coordinate notation (e.g. e2e4)
+    else if (algebraicMove.length() >= 4) {
+        std::string from = algebraicMove.substr(0, 2);
+        std::string to = algebraicMove.substr(2, 2);
+        
+        try {
+            int fromIndex = AlgebraicToIndex(from);
+            int toIndex = AlgebraicToIndex(to);
+            
+            // Get the piece at the from position
+            char piece = position.boardState[fromIndex];
+            
+            // If no piece found, assume pawn with appropriate color
+            if (piece == ' ') {
+                piece = position.whiteToMove ? 'P' : 'p';
+            }
+            
+            Move move;
+            std::string startPosStr = (fromIndex < 10) ? "0" + std::to_string(fromIndex) : std::to_string(fromIndex);
+            std::string endPosStr = (toIndex < 10) ? "0" + std::to_string(toIndex) : std::to_string(toIndex);
+            move.notation = piece + startPosStr + endPosStr;
+            
+            // Handle en passant
+            if (tolower(piece) == 'p' && (fromIndex % 8) != (toIndex % 8) && position.boardState[toIndex] == ' ') {
+                move.isEnPassant = true;
+                move.enPassantCapturePos = position.whiteToMove ? (toIndex + 8) : (toIndex - 8);
+            }
+            
+            // Handle promotion if specified
+            if (algebraicMove.length() > 4) {
+                char promotionPiece = algebraicMove[4];
+                if (isalpha(promotionPiece)) {
+                    move.notation += promotionPiece;
+                }
+            }
+            
+            return move;
+        } catch (const std::exception& e) {
+            throw std::invalid_argument("Error parsing coordinate notation: " + algebraicMove + " - " + e.what());
+        }
     }
-
-    // Handle promotion
-    if (promotion) {
-        move.notation += promotion;
-    }
-
-    return move;
+    
+    throw std::invalid_argument("Unsupported move format: " + algebraicMove);
 }
 
 // Add this helper function before EvaluateBoard
@@ -2317,19 +2672,244 @@ int EvaluateOpeningPrinciples(const BoardPosition& position) {
     return score;
 }
 
+int ApplyPersonalityToEvaluation(int baseScore, const BoardPosition& position, 
+                               const std::vector<Move>* preCalculatedMoves,
+                               bool fullCalculation) {
+    int score = baseScore;
+    const std::string& boardState = position.boardState;
+    
+    // Count pieces and their positions - only if needed
+    int whitePieceCount = 0, blackPieceCount = 0;
+    int whiteCentralPieces = 0, blackCentralPieces = 0;
+    int whiteDevelopedPieces = 0, blackDevelopedPieces = 0;
+
+    // Only do full piece counting if needed by this personality
+    // This is much more efficient for deep search
+    if (fullCalculation) {
+        for (int i = 0; i < 64; i++) {
+            char piece = boardState[i];
+            int file = i % 8;
+            int rank = i / 8;
+            bool isCentral = (file >= 2 && file <= 5 && rank >= 2 && rank <= 5);
+
+            if (piece != ' ') {
+                // Count pieces
+                if (isupper(piece)) whitePieceCount++;
+                else blackPieceCount++;
+
+                // Central pieces
+                if (isCentral) {
+                    if (isupper(piece)) whiteCentralPieces++;
+                    else blackCentralPieces++;
+                }
+
+                // Count developed pieces
+                if (rank <= 5 && isupper(piece) && piece != 'P' && piece != 'K') {
+                    whiteDevelopedPieces++;
+                }
+                if (rank >= 2 && islower(piece) && piece != 'p' && piece != 'k') {
+                    blackDevelopedPieces++;
+                }
+            }
+        }
+    }
+
+    // Apply personality-specific adjustments
+    switch (currentPersonality) {
+        case AGGRESSIVE:
+            // Basic adjustments always applied
+            if (fullCalculation) {
+                score += (whiteCentralPieces - blackCentralPieces) * 15;
+                score += whiteDevelopedPieces * 10;
+                score -= blackDevelopedPieces * 10;
+            }
+            
+            // Only do expensive calculations for full evaluation at shallow depths
+            if (fullCalculation && preCalculatedMoves) {
+                for (const Move& move : *preCalculatedMoves) {
+                    if (move.notation.length() >= 5) {
+                        int endPos = std::stoi(move.notation.substr(3, 2));
+                        char target = position.boardState[endPos];
+                        if (target != ' ') {
+                            // Simplified capture analysis - NO IsGoodCapture call!
+                            int attackerValue = GetPieceValue(move.notation[0]);
+                            int targetValue = GetPieceValue(target);
+                            
+                            // Simple MVV/LVA calculation
+                            if (targetValue > attackerValue) {
+                                if (position.whiteToMove && islower(target)) 
+                                    score += targetValue * 3;
+                                else if (!position.whiteToMove && isupper(target)) 
+                                    score -= targetValue * 3;
+                            }
+                        }
+                    }
+                }
+                
+                // Bonus for pieces that attack enemy territory - only in full calculation
+                for (int i = 0; i < 64; i++) {
+                    char piece = position.boardState[i];
+                    int rank = i / 8;
+                    
+                    // Pieces in enemy territory
+                    if ((piece != ' ' && piece != 'P' && piece != 'K' && 
+                         isupper(piece) && rank < 4) || 
+                        (piece != ' ' && piece != 'p' && piece != 'k' && 
+                         islower(piece) && rank > 3)) {
+                        if (isupper(piece)) score += 15;  // White piece in black's half
+                        else score -= 15;                 // Black piece in white's half
+                    }
+                }
+            }
+            break;
+            
+        case POSITIONAL:
+            // Light version for deep search
+            if (fullCalculation) {
+                score += (whiteCentralPieces - blackCentralPieces) * 20;
+                
+                // Value bishops more highly (open positions)
+                for (int i = 0; i < 64; i++) {
+                    if (boardState[i] == 'B') score += 15;
+                    if (boardState[i] == 'b') score -= 15;
+                }
+            } else {
+                // Very light adjustment for deep search
+                score += 10; // Subtle positional bias
+            }
+            break;
+            
+        case SOLID:
+            // Light version for deep search
+            if (fullCalculation) {
+                score += whitePieceCount * 7; 
+                score -= blackPieceCount * 7;
+                
+                // Devalue trades and attacks
+                for (int i = 0; i < 64; i++) {
+                    int file = i % 8;
+                    char piece = boardState[i];
+                    // Value defensive pawn formations
+                    if (piece == 'P' && i > 7) {
+                        // Check if pawns defend each other
+                        if (file > 0 && boardState[i-1] == 'P') score += 10;
+                        if (file < 7 && boardState[i+1] == 'P') score += 10;
+                    }
+                    if (piece == 'p' && i < 56) {
+                        if (file > 0 && boardState[i-1] == 'p') score -= 10;
+                        if (file < 7 && boardState[i+1] == 'p') score -= 10;
+                    }
+                }
+            } else {
+                // Very light adjustment for deep search
+                score -= 10; // Subtle defensive bias
+            }
+            break;
+            
+        case DYNAMIC:
+            // Light version for deep search
+            if (fullCalculation) {
+                score += whiteDevelopedPieces * 12;
+                score -= blackDevelopedPieces * 12;
+                
+                // Bonus for knights (tactical pieces)
+                for (int i = 0; i < 64; i++) {
+                    if (boardState[i] == 'N') score += 12;
+                    if (boardState[i] == 'n') score -= 12;
+                }
+                
+                // Value mobility above all - but only if moves are provided
+                if (preCalculatedMoves) {
+                    score += preCalculatedMoves->size() * (position.whiteToMove ? 5 : -5);
+                }
+            }
+            break;
+            
+        case STANDARD:
+        default:
+            // No adjustments for standard play
+            break;
+    }
+    
+    return score;
+}
+
+// Add this function to check if a move will hang a piece
+bool IsMoveSafe(const BoardPosition& position, const Move& move) {
+    // Check if it's a capture move
+    int endPos = std::stoi(move.notation.substr(3, 2));
+    bool isCapture = (position.boardState[endPos] != ' ' || move.isEnPassant);
+    
+    if (isCapture) {
+        // For captures, use the comprehensive IsGoodCapture function
+        return IsGoodCapture(position, move);
+    }
+    
+    // For non-captures, check if the piece would be hanging after the move
+    BoardPosition newPosition = ApplyMove(position, move);
+    
+    // Get the moved piece info
+    char movedPiece = newPosition.boardState[endPos];
+    int movedValue = GetPieceValue(movedPiece);
+    
+    // Check if any opponent response can capture our piece with a lesser-valued piece
+    std::vector<Move> responses = GenerateMoves(newPosition, !position.whiteToMove);
+    
+    for (const Move& response : responses) {
+        int responseTarget = std::stoi(response.notation.substr(3, 2));
+        
+        // If this response captures our moved piece
+        if (responseTarget == endPos) {
+            char recapturer = response.notation[0];
+            int recapturerValue = GetPieceValue(recapturer);
+            
+            // If attacker is less valuable or equal, the move is unsafe
+            if (recapturerValue <= movedValue) {
+                std::string attackerType = (recapturerValue == 1) ? "pawn" : 
+                                          (recapturerValue == 3) ? "minor piece" : 
+                                          (recapturerValue == 5) ? "rook" : "queen";
+                
+                std::cout << "UNSAFE MOVE DETECTED: " << ConvertToAlgebraic(move, position) 
+                          << " can be captured by " << attackerType 
+                          << " (" << recapturerValue << " vs " << movedValue << ")" << std::endl;
+                return false;
+            }
+        }
+    }
+    
+    return true;
+}
+
 extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistoryStr, int maxDepth, bool isWhite)
 {
     std::string moveHistory(moveHistoryStr);
-    BoardPosition currentPosition = ParseMoveHistory(moveHistory);
+
+    // Save original personality for restoration later
+    ChessPersonality originalPersonality = currentPersonality;
+    
+    // Temporarily set to STANDARD during search for performance
+    if (originalPersonality != STANDARD) {
+        std::cout << "Temporarily using STANDARD personality for search" << std::endl;
+        currentPersonality = STANDARD;
+    }
+    
+    // Parse the move history and get current position
+    BoardPosition currentPosition;
+    try {
+        currentPosition = ParseMoveHistory(moveHistory);
+    } catch (const std::exception& e) {
+        std::cerr << "Error parsing move history: " << e.what() << std::endl;
+        static std::string errorResult = "error";
+        return errorResult.c_str();
+    }
 
     // Debug info
     PrintBoard(currentPosition.boardState);
 
-    Move bestMove;
-
     // Starting time for time management
     auto startTime = std::chrono::high_resolution_clock::now();
     const int MAX_SEARCH_TIME_MS = 5000; // 5 seconds max search time
+    const int ABSOLUTE_FAILSAFE_TIME_MS = 10000; // 10 second hard limit
 
     // Clear transposition table at the start of a new search
     for (auto& entry : transpositionTable) {
@@ -2351,9 +2931,13 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
 
     // If no legal moves, return an empty string
     if (legalMoves.empty()) {
-        static std::string noMoveResult = "";
+        static std::string noMoveResult = "error";
         return noMoveResult.c_str();
     }
+
+    // Initialize bestMove with the first legal move as a fallback
+    Move bestMove = legalMoves[0];
+    bool hasBestMove = true;
 
     // ----- OPENING MOVE FILTERING -----
     // Only apply to first few moves (opening phase)
@@ -2516,6 +3100,10 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
         }
     }
 
+    // Force consistent search behavior for both players
+    const int FIXED_TIME_LIMIT_MS = 2000; // 2 seconds max per move
+    startTime = std::chrono::high_resolution_clock::now();
+
     // Iterative deepening - start from depth 1 and increase
     for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++) {
         // Create root node manually with only filtered moves
@@ -2541,14 +3129,8 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
 
         // Search all filtered root children
         for (MoveTreeNode* childNode : root->children) {
-            int moveValue;
-            if (currentPosition.whiteToMove) {
-                moveValue = -MinimaxOnTree(childNode, currentDepth - 1, -2147483647, -bestValue, false);
-            } else {
-                moveValue = -MinimaxOnTree(childNode, currentDepth - 1, -bestValue, 2147483647, true);
-            }
-            
-            // For both players, higher score is better (after our normalization)
+            int moveValue = -MinimaxOnTree(childNode, currentDepth - 1, -2147483647, 2147483647, !currentPosition.whiteToMove, true);
+    
             if (moveValue > bestValue) {
                 bestValue = moveValue;
                 currentBestMove = childNode->move;
@@ -2559,6 +3141,7 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
         // Save the best move at this depth
         if (moveFound) {
             bestMove = currentBestMove;
+            hasBestMove = true;
 
             // If we found a forced checkmate, no need to search deeper
             if (bestValue > 90000 || bestValue < -90000) {
@@ -2575,15 +3158,182 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
         if (elapsedMs > MAX_SEARCH_TIME_MS) {
             break; // Stop iterative deepening if we're out of time
         }
+        
+        // Failsafe time limit for bad cases
+        if (elapsedMs > ABSOLUTE_FAILSAFE_TIME_MS) {
+            std::cout << "FAILSAFE: Search taking too long, terminating early" << std::endl;
+            break;
+        }
+
+        // At maximum main search depth, check if there are immediate material threats
+        // and extend search if needed
+        if (currentDepth == maxDepth) {
+            for (const Move& move : legalMoves) {
+                BoardPosition afterMove = ApplyMove(currentPosition, move);
+                if (IsKingInCheck(afterMove, currentPosition.whiteToMove) || 
+                    HasMaterialThreat(afterMove, currentPosition.whiteToMove)) {
+                    maxDepth += 1; // Extend search when material threats exist
+                    break;
+                }
+            }
+        }
+        
+        if (currentDepth >= 3) { // Only enforce after getting a reasonable depth
+            auto currentTime = std::chrono::high_resolution_clock::now();
+            auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                currentTime - startTime).count();
+            if (elapsedMs > FIXED_TIME_LIMIT_MS) {
+                std::cout << "Time limit reached: " << elapsedMs << "ms" << std::endl;
+                break; // Stop iterative deepening if we're out of time
+            }
+        }
+    }
+
+    // After search is complete, restore the original personality
+    if (originalPersonality != STANDARD) {
+        std::cout << "Restoring " << (int)originalPersonality << " personality for final move selection" << std::endl;
+        currentPersonality = originalPersonality;
+    }
+
+    // Final evaluation with personality preference
+    if (currentPersonality != STANDARD && !legalMoves.empty()) {
+        std::vector<std::pair<int, Move>> finalEvaluation;
+        
+        // Evaluate all legal moves using the personality
+        for (const Move& move : legalMoves) {
+            BoardPosition newPos = ApplyMove(currentPosition, move);
+            int score = EvaluateBoard(newPos, 0); // Shallow evaluation only
+            
+            if (!currentPosition.whiteToMove) {
+                score = -score;
+            }
+            
+            finalEvaluation.push_back({score, move});
+            std::cout << "Final evaluation with " << (int)currentPersonality 
+                      << " personality: " << ConvertToAlgebraic(move, currentPosition) 
+                      << " = " << score << std::endl;
+        }
+        
+        // Sort by highest score
+        std::sort(finalEvaluation.begin(), finalEvaluation.end(),
+            [](const auto& a, const auto& b) { return a.first > b.first; });
+        
+        // Override best move with personality's preference if we have results
+        if (!finalEvaluation.empty()) {
+            bestMove = finalEvaluation[0].second;
+            hasBestMove = true;
+            std::cout << "Personality preferred move: " 
+                      << ConvertToAlgebraic(bestMove, currentPosition) << std::endl;
+        }
+    }
+
+    // CRITICAL FINAL SAFETY CHECK - Make absolutely sure we're not returning a blunder
+    // This ensures that no matter what, we won't return a move that hangs a piece
+    if (hasBestMove && !IsMoveSafe(currentPosition, bestMove)) {
+        std::cout << "EMERGENCY SAFETY OVERRIDE: About to return a blunder: " 
+                << ConvertToAlgebraic(bestMove, currentPosition) << std::endl;
+    
+        // Find the safest move instead
+        bool foundSafeMove = false;
+        for (const Move& move : legalMoves) {
+            if (move.notation != bestMove.notation && IsMoveSafe(currentPosition, move)) {
+                bestMove = move;
+                foundSafeMove = true;
+                std::cout << "Replacing with safe move: " 
+                        << ConvertToAlgebraic(bestMove, currentPosition) << std::endl;
+                break;
+            }
+        }
+    
+        // If no completely safe move found, at least log a warning
+        if (!foundSafeMove && !legalMoves.empty()) {
+            bestMove = legalMoves[0]; // Fall back to first legal move
+            std::cout << "WARNING: No safe moves found! Using first legal move: " 
+                    << ConvertToAlgebraic(bestMove, currentPosition) << std::endl;
+        }
     }
 
     static std::string result;
-    result = ConvertToAlgebraic(bestMove, currentPosition);
+    
+    if (hasBestMove) {
+        // Always verify best move has valid notation before converting
+        if (bestMove.notation.length() >= 5) {
+            result = ConvertToAlgebraic(bestMove, currentPosition);
+        } else {
+            // Find the highest scored move as backup
+            std::vector<std::pair<int, Move>> scoredMoves;
+            for (const Move& move : legalMoves) {
+                BoardPosition newPos = ApplyMove(currentPosition, move);
+                int score = EvaluateBoard(newPos);
+                if (!currentPosition.whiteToMove) {
+                    score = -score;
+                }
+                scoredMoves.push_back({score, move});
+            }
+            
+            // Sort by score (higher is better)
+            std::sort(scoredMoves.begin(), scoredMoves.end(),
+                [](const auto& a, const auto& b) { return a.first > b.first; });
+                
+            if (!scoredMoves.empty()) {
+                // DOUBLE-CHECK that this move isn't hanging a piece
+                bestMove = scoredMoves[0].second;
+                if (!IsCapture(currentPosition.boardState, bestMove) && 
+                    !IsMoveSafe(currentPosition, bestMove)) {
+                    
+                    // Find ANY safe move as last resort
+                    for (const auto& [score, move] : scoredMoves) {
+                        if (IsCapture(currentPosition.boardState, move) || 
+                            IsMoveSafe(currentPosition, move)) {
+                            bestMove = move;
+                            break;
+                        }
+                    }
+                }
+                
+                result = ConvertToAlgebraic(bestMove, currentPosition);
+            } else {
+                result = "error";
+            }
+        }
+    } else {
+        result = "error";
+    }
+    
+    // Make sure we have a valid result, not an error string
+    if (result == "error" && !legalMoves.empty()) {
+        std::cout << "WARNING: Engine returned 'error' despite having legal moves. Using fallback." << std::endl;
+        
+        // Fallback to the first legal move that doesn't hang a piece
+        for (const Move& move : legalMoves) {
+            if (IsCapture(currentPosition.boardState, move) || IsMoveSafe(currentPosition, move)) {
+                result = ConvertToAlgebraic(move, currentPosition);
+                std::cout << "Fallback move selected: " << result << std::endl;
+                break;
+            }
+        }
+        
+        // If still no suitable move, use the first legal move regardless
+        if (result == "error") {
+            result = ConvertToAlgebraic(legalMoves[0], currentPosition);
+            std::cout << "Last resort fallback move: " << result << std::endl;
+        }
+    }
     
     // Final debug output
     std::cout << "Selected move: " << result << std::endl;
     
     return result.c_str();
+}
+
+extern "C" __declspec(dllexport) void SetEnginePersonality(int personalityType) {
+    // Convert int to enum and validate range
+    if (personalityType >= STANDARD && personalityType <= DYNAMIC) {
+        currentPersonality = static_cast<ChessPersonality>(personalityType);
+        std::cout << "Engine personality set to: " << personalityType << std::endl;
+    } else {
+        std::cout << "Invalid personality type: " << personalityType << std::endl;
+    }
 }
 
 // Print the move tree for debugging (optional)
@@ -2636,8 +3386,46 @@ void DebugOpeningMoves() {
     na6Pos.boardState[16] = 'n'; // Knight at a6
     
     std::cout << "Na6 after e4 evaluation: " << EvaluateOpeningPrinciples(na6Pos) << std::endl;
+
+    // Test White's first move selection
+    BoardPosition startPos;
+    startPos.boardState = "rnbqkbnrpppppppp                                PPPPPPPPRNBQKBNR";
+    startPos.whiteToMove = true;
+    startPos.fullMoveNumber = 1;
+    startPos.whiteCanCastleKingside = true;
+    startPos.whiteCanCastleQueenside = true;
+    startPos.blackCanCastleKingside = true;
+    startPos.blackCanCastleQueenside = true;
+    
+    const char* firstMove = GetBestMove("", 3, true);
+    std::cout << "White's first move with new evaluation: " << firstMove << std::endl;
+    
+    // Test Black's response to e4
+    BoardPosition e4Pos2;
+    e4Pos2.boardState = "rnbqkbnrpppppppp                P               PPP PPPPRNBQKBNR";
+    e4Pos2.whiteToMove = false;
+    e4Pos2.fullMoveNumber = 1;
+    
+    const char* blackResponse = GetBestMove("e2e4 Nb8c6 d2d4", 3, false);
+    std::cout << "Black's response to e4: " << blackResponse << std::endl;
+    
+    // Test personalities
+    std::cout << "\nTesting personalities:" << std::endl;
+    
+    // Test aggressive personality
+    SetEnginePersonality(AGGRESSIVE);
+    std::cout << "Aggressive personality move: " << GetBestMove("e2e4 e7e5", 3, true) << std::endl;
+    
+    // Test positional personality
+    SetEnginePersonality(POSITIONAL);
+    std::cout << "Positional personality move: " << GetBestMove("e2e4 e7e5", 3, true) << std::endl;
+    
+    // Reset to standard
+    SetEnginePersonality(STANDARD);
+
 }
 
+/*
 int main() {
     // Test 1: Generate moves for the starting position
     BoardPosition startPosition;
@@ -2674,3 +3462,4 @@ int main() {
 
     return 0;
 }
+*/

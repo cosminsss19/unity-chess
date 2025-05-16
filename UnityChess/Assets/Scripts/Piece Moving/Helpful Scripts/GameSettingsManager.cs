@@ -11,8 +11,8 @@ namespace Piece_Moving.Helpful_Scripts
         // Game settings
         public bool PlayAgainstComputer { get; private set; }
         public bool ComputerPlaysWhite { get; private set; }
-        public int ComputerDifficulty { get; private set; } = 3; // Default medium
-    
+
+        public ChessPersonality ComputerPersonality { get; private set; } = ChessPersonality.STANDARD; // Default personality
         private void Awake()
         {
             // Singleton implementation
@@ -36,10 +36,10 @@ namespace Piece_Moving.Helpful_Scripts
         {
             ComputerPlaysWhite = computerPlaysWhite;
         }
-    
-        public void SetDifficulty(int difficulty)
+        
+        public void SetComputerPersonality(ChessPersonality personality)
         {
-            ComputerDifficulty = difficulty;
+            ComputerPersonality = personality;
         }
     
         public void StartGame()
