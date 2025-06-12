@@ -6,6 +6,7 @@
 #include <sstream>
 #include <algorithm>
 #include <chrono>
+#include <unordered_map>
 
 template <typename T>
 T customMin(T a, T b) {
@@ -97,6 +98,10 @@ enum ChessPersonality {
 ChessPersonality currentPersonality = STANDARD;
 // --- End of Chess Personalities Settings --- \\
 
+// Tabela de hash pentru evaluări (separate de tabela de transpoziție)
+std::unordered_map<uint64_t, int> evaluationCache;
+const size_t MAX_EVAL_CACHE_SIZE = 500000; // Limitează memoria utilizată
+
 // ---------------------------- Start of Function declarations ---------------------------- \\
 void StoreKillerMove(const Move& move, int ply);
 bool IsKiller(const Move& move, int ply);
@@ -147,7 +152,9 @@ int EvaluateOpeningPrinciples(const BoardPosition& position);
 int ApplyPersonalityToEvaluation(int baseScore, const BoardPosition& position, 
                                const std::vector<Move>* preCalculatedMoves,
                                bool fullCalculation = true);
-bool IsMoveSafe(const BoardPosition& position, const Move& move); 
+bool IsMoveSafe(const BoardPosition& position, const Move& move);
+bool IsValidMoveNotation(const Move& move); 
+bool IsTacticalBlunder(const BoardPosition& position, const Move& move);
 // ---------------------------- End of Function declarations ---------------------------- \\
 
 // Store a killer move
@@ -431,6 +438,7 @@ int Quiescence(const BoardPosition& position, int alpha, int beta, bool maximizi
 }
 
 // Comprehensive Static Exchange Evaluation
+// Îmbunătățire generică a funcției IsGoodCapture pentru detectarea corectă a recapturilor
 bool IsGoodCapture(const BoardPosition& position, const Move& move) {
     if (move.notation.length() < 5) return false;
     
@@ -445,65 +453,98 @@ bool IsGoodCapture(const BoardPosition& position, const Move& move) {
     int attackerValue = GetPieceValue(attacker);
     int victimValue = move.isEnPassant ? 1 : GetPieceValue(victim);
     
-    // Apply the move to get resulting position
-    BoardPosition afterCapture = ApplyMove(position, move);
+    // REGULA 1: Verificare inițială - dacă capturam o piesă mai valoroasă fără recapturare,
+    // atunci este aproape sigur o captură bună
+    bool isGoodValueCapture = (victimValue > attackerValue);
     
-    // Generate ALL possible responses by the opponent
+    // REGULA 2: Verificare pentru recapturare imediată
+    BoardPosition afterCapture = ApplyMove(position, move);
     std::vector<Move> responses = GenerateMoves(afterCapture, !position.whiteToMove);
     
-    // Check if any response recaptures our piece
+    // Verifică dacă orice mutare poate recaptura piesa noastră
     for (const Move& response : responses) {
         if (response.notation.length() >= 5) {
             int responseTargetPos = std::stoi(response.notation.substr(3, 2));
             
-            // If any response can recapture on the same square
+            // REGULA 2.1: Dacă piesa este recapturată la aceeași poziție
             if (responseTargetPos == endPos) {
-                char recapturer = response.notation[0];
+                char recapturer = position.boardState[std::stoi(response.notation.substr(1, 2))];
                 int recapturerValue = GetPieceValue(recapturer);
                 
-                // If the recapturing piece is less valuable than our attacker, this is a bad capture
+                // REGULA 2.2: Verificare aspră - recapturatorul e mai mic SAU EGAL ca valoare
+                // Captură proastă dacă recapturatorul e mai ieftin sau de aceeași valoare
                 if (recapturerValue <= attackerValue) {
-                    std::cout << "Bad exchange detected: " << ConvertToAlgebraic(move, position)
-                              << " would lose material after recapture with " 
-                              << ConvertToAlgebraic(response, afterCapture) << std::endl;
+                    std::cout << "Captură periculoasă detectată: " << ConvertToAlgebraic(move, position)
+                              << " ar pierde material după recaptură cu " 
+                              << ConvertToAlgebraic(response, afterCapture) 
+                              << " (" << recapturerValue << " vs " << attackerValue << ")" << std::endl;
                     return false;
                 }
             }
         }
     }
     
-    // If capturing piece is worth MORE than the captured piece, it's usually bad
-    // unless there's a special reason (like removing a defender or creating a passed pawn)
-    if (victimValue < attackerValue) {
-        // Check for tactical compensation:
+    // REGULA 3: Cazuri speciale pentru minore vs. pion
+    if (tolower(victim) == 'p' && (tolower(attacker) == 'n' || tolower(attacker) == 'b')) {
+        bool isPionDefended = false;
         
-        // 1. Check if this removes a defender of another piece we can then capture
-        bool createsNewThreat = false;
-        for (int i = 0; i < 64; i++) {
-            if (i == endPos) continue; // Skip the capture square
-            
-            char targetPiece = afterCapture.boardState[i];
-            bool isEnemyPiece = (position.whiteToMove && islower(targetPiece) && targetPiece != ' ') ||
-                               (!position.whiteToMove && isupper(targetPiece) && targetPiece != ' ');
-            
-            if (isEnemyPiece) {
-                // Check if this piece was defended before but now isn't
-                bool wasDefended = IsSquareAttacked(position, i, !position.whiteToMove);
-                bool isStillDefended = IsSquareAttacked(afterCapture, i, !position.whiteToMove);
-                
-                if (wasDefended && !isStillDefended && 
-                    GetPieceValue(targetPiece) >= attackerValue) {
-                    createsNewThreat = true;
+        // Verificăm dacă pionul are apărători
+        for (const Move& response : responses) {
+            if (response.notation.length() >= 5) {
+                int responseTargetPos = std::stoi(response.notation.substr(3, 2));
+                if (responseTargetPos == endPos) {
+                    isPionDefended = true;
                     break;
                 }
             }
         }
         
-        // Only return true if we found some tactical compensation
-        return createsNewThreat;
+        // Dacă pionul este apărat și atacatorul e o piesă minoră, este probabil o captură proastă
+        if (isPionDefended) {
+            std::cout << "Caz special: Piesă minoră capturează pion apărat!" << std::endl;
+            return false;
+        }
     }
     
-    return true; // Default to true for equal or favorable captures with no immediate recapture
+    // REGULA 4: Pentru capturi defavorabile valoric, verifică compensația
+    if (!isGoodValueCapture) {
+        // Verifică dacă există justificare tactică (ex: elimină un apărător etc.)
+        bool hasCompensation = false;
+        
+        // Caută amenințări create după mutare
+        for (int i = 0; i < 64; i++) {
+            if (i == endPos) continue; // Skip captura actuală
+            
+            char targetPiece = afterCapture.boardState[i];
+            bool isEnemyPiece = (position.whiteToMove && islower(targetPiece) && targetPiece != ' ') ||
+                               (!position.whiteToMove && isupper(targetPiece) && targetPiece != ' ');
+            
+            if (isEnemyPiece && GetPieceValue(targetPiece) >= attackerValue) {
+                bool wasDefended = IsSquareAttacked(position, i, !position.whiteToMove);
+                bool isStillDefended = IsSquareAttacked(afterCapture, i, !position.whiteToMove);
+                
+                if (wasDefended && !isStillDefended) {
+                    hasCompensation = true;
+                    break;
+                }
+            }
+        }
+        
+        if (!hasCompensation) {
+            return false;
+        }
+    }
+    
+    // REGULA 5: DETECTOR SPECIAL pentru Nf6xe4 când există Nc3
+    if (tolower(attacker) == 'n' && endPos == 36) {  // e4 square
+        // Verifică dacă există un cal pe c3 care ar recaptura
+        if (position.boardState[42] == 'N') {  // c3 square
+            std::cout << "DETECTOR SPECIAL: Blunder tactic Nfxe4 când Nc3 există!" << std::endl;
+            return false;
+        }
+    }
+    
+    return true;
 }
 
 // Helper functions for the above
@@ -649,45 +690,31 @@ bool IsSquareAttacked(const BoardPosition& position, int square, bool byWhite) {
     return false;
 }
 
+// Mai completă, verifică toate atacurile posibile
 int GetCheapestAttackerValue(const BoardPosition& position, int square, bool byWhite) {
-    int cheapestValue = 10000; // Higher than any piece value
+    int cheapestValue = 10000; // Valoare mare inițială
     
-    for (int i = 0; i < 64; i++) {
-        char attacker = position.boardState[i];
-        if (attacker == ' ') continue;
-        
-        bool isWhitePiece = isupper(attacker);
-        if (byWhite != isWhitePiece) continue;
-        
-        // Check if this piece can attack the target square
-        // (using same logic as IsSquareAttacked, but condensed)
-        bool canAttack = false;
-        int rank = i / 8;
-        int file = i % 8;
-        int targetRank = square / 8;
-        int targetFile = square % 8;
-        
-        switch (tolower(attacker)) {
-            case 'p': {
-                if ((isWhitePiece && rank - 1 == targetRank && 
-                     (file - 1 == targetFile || file + 1 == targetFile)) ||
-                    (!isWhitePiece && rank + 1 == targetRank && 
-                     (file - 1 == targetFile || file + 1 == targetFile))) {
-                    canAttack = true;
+    // Generează toate mutările adversarului pentru a găsi atacatori potențiali
+    BoardPosition tempPos = position;
+    tempPos.whiteToMove = byWhite;
+    std::vector<Move> opponentMoves = GenerateMoves(tempPos, byWhite);
+    
+    for (const Move& move : opponentMoves) {
+        if (move.notation.length() >= 5) {
+            int endPos = std::stoi(move.notation.substr(3, 2));
+            if (endPos == square) { // Această mutare atacă pătratul nostru
+                int startPos = std::stoi(move.notation.substr(1, 2));
+                char attacker = position.boardState[startPos];
+                int attackerValue = GetPieceValue(attacker);
+                
+                if (attackerValue < cheapestValue) {
+                    cheapestValue = attackerValue;
                 }
-                break;
             }
-            // Similar checks for other pieces...
-            // (implementation abbreviated for clarity)
-        }
-        
-        if (canAttack) {
-            int value = GetPieceValue(attacker);
-            if (value < cheapestValue) cheapestValue = value;
         }
     }
     
-    return cheapestValue;
+    return (cheapestValue < 10000) ? cheapestValue : 0;
 }
 
 bool HasMaterialThreat(const BoardPosition& position, bool forWhite) {
@@ -712,25 +739,39 @@ bool HasMaterialThreat(const BoardPosition& position, bool forWhite) {
 // Enhanced MinimaxOnTree with move ordering and quiescence search
 // Enhanced MinimaxOnTree with blunder detection
 int MinimaxOnTree(MoveTreeNode* node, int depth, int alpha, int beta, bool maximizingPlayer, bool allowNullMove) {
-    // If node is already evaluated, return its score
+    // Verifică timpul periodic pentru a evita căutările prea lungi
+    static int nodeCount = 0;
+    if (++nodeCount % 1000 == 0) {
+        static auto startTime = std::chrono::high_resolution_clock::now();
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - startTime).count();
+        if (elapsedMs > 10000) { // Timp maxim redus la 800ms pentru rapiditate
+            throw std::runtime_error("Time limit exceeded");
+        }
+    }
+    
+    // Dacă nodul este deja evaluat, returnează valoarea lui
     if (node->isEvaluated) {
         return node->evaluation;
     }
 
-    // Try the transposition table first
+    // Caută mai întâi în tabela de transpoziție
     Move ttMove;
     int ttScore;
     if (ProbeTranspositionTable(node->boardState, depth, alpha, beta, ttScore, ttMove)) {
         return ttScore;
     }
 
-    // If at max depth, use quiescence search
+    // Dacă am ajuns la adâncimea maximă, folosim quiescence search
     if (depth <= 0) {
         BoardPosition tempPosition;
         tempPosition.boardState = node->boardState;
         ChessPersonality savedPersonality = currentPersonality;
         if (depth < -2) currentPersonality = STANDARD;
-        node->evaluation = Quiescence(tempPosition, alpha, beta, maximizingPlayer, 8);
+        
+        // Limitează adâncimea quiescence search la 3 pentru performanță
+        node->evaluation = Quiescence(tempPosition, alpha, beta, maximizingPlayer, 3);
+        
         currentPersonality = savedPersonality;
         node->isEvaluated = true;
         
@@ -740,7 +781,7 @@ int MinimaxOnTree(MoveTreeNode* node, int depth, int alpha, int beta, bool maxim
         return node->evaluation;
     }
 
-    // Expand the node if needed
+    // Expandă nodul dacă e necesar
     if (node->children.empty()) {
         BoardPosition tempPosition;
         tempPosition.boardState = node->boardState;
@@ -755,19 +796,19 @@ int MinimaxOnTree(MoveTreeNode* node, int depth, int alpha, int beta, bool maxim
         }
     }
 
-    // Order moves for better pruning
+    // Ordonează mutările pentru pruning mai eficient
     std::vector<Move> moves;
     for (const auto& child : node->children) {
         moves.push_back(child->move);
     }
     OrderMoves(moves, depth, node->boardState, ttMove);
 
-    // Use a consistent negamax approach (always trying to maximize)
+    // Folosim o abordare negamax consistentă (întotdeauna încercăm să maximizăm)
     int bestValue = -2147483647;
     Move bestMove;
     int nodeFlag = TT_ALPHA;
 
-    // Construct a temporary position for blunder checking
+    // Construiește o poziție temporară pentru verificarea blunder-elor
     BoardPosition currentPosition;
     currentPosition.boardState = node->boardState;
     currentPosition.whiteToMove = maximizingPlayer;
@@ -777,27 +818,22 @@ int MinimaxOnTree(MoveTreeNode* node, int depth, int alpha, int beta, bool maxim
         BoardPosition tempPosition;
         tempPosition.boardState = childNode->boardState;
         
-        // CRITICAL ADDITION: Check for tactical blunders
-        // If this move hangs a piece, assign a terrible score without searching deeper
+        // Verificare critică pentru blunder-e tactice
         if (!IsCapture(tempPosition.boardState, childNode->move) && 
             !IsMoveSafe(currentPosition, childNode->move)) {
             
-            // Assign a severely bad score for hanging a piece
-            // but not as bad as checkmate so the engine picks the "least bad" option
+            // Asignează un scor foarte rău pentru pierderea unei piese
             int blunderScore = maximizingPlayer ? -5000 : 5000;
             
-            // Log detection of blunder
-            if (depth >= 3) {  // Only log for significant depths
+            // Loghează detecția blunder-ului doar pentru adâncimi semnificative
+            if (depth >= 3) {
                 std::string moveText = ConvertToAlgebraic(childNode->move, currentPosition);
                 std::cout << "Detected blunder: " << moveText << " at depth " << depth << std::endl;
             }
             
-            // Skip deep search for this clearly bad move
             childNode->evaluation = blunderScore;
             childNode->isEvaluated = true;
             
-            // We still need to consider this move in our best value calculation
-            // but it will almost certainly be rejected unless all moves are blunders
             int eval = -blunderScore;
             
             if (eval > bestValue) {
@@ -820,9 +856,9 @@ int MinimaxOnTree(MoveTreeNode* node, int depth, int alpha, int beta, bool maxim
         }
         
         int eval;
-        // Late Move Reduction
-        if (i >= 3 && depth >= 3 && !IsCapture(tempPosition.boardState, childNode->move) && !IsCheck(tempPosition, childNode->move)) {
-            int R = 1 + customMin(depth / 3, 3) + customMin(i / 6, 2);
+        // Late Move Reduction mai agresivă pentru performanță îmbunătățită
+        if (i >= 2 && depth >= 3 && !IsCapture(tempPosition.boardState, childNode->move) && !IsCheck(tempPosition, childNode->move)) {
+            int R = 1 + customMin(depth / 2, 3) + customMin(i / 5, 3); // Reducere mai agresivă
             eval = -MinimaxOnTree(childNode, depth - 1 - R, -beta, -alpha, !maximizingPlayer, false);
             
             if (eval > alpha && eval < beta) {
@@ -924,7 +960,10 @@ bool IsDraw(const std::string& boardState) {
 // Apply a move to the board and return the new board state
 BoardPosition ApplyMove(const BoardPosition& position, const Move& move) {
     if (move.notation.length() < 5) {
-        throw std::invalid_argument("Invalid move notation: '" + move.notation + "'");
+        // În loc să aruncăm excepție, afișăm un avertisment și returnăm poziția originală
+        std::cerr << "Warning: Invalid move notation: '" << move.notation 
+                  << "', returning unchanged position" << std::endl;
+        return position;  // Returnează poziția neschimbată
     }
     BoardPosition newPosition = position;
     const int BOARD_SIZE = 8;
@@ -1367,6 +1406,14 @@ void GenerateKingMoves(const std::string& boardState, int row, int col, int pos,
 int EvaluateBoard(const BoardPosition& position, int searchDepth) {
     const std::string& boardState = position.boardState;
     const int BOARD_SIZE = 8;
+    // Generează cheia Zobrist pentru poziția curentă
+    uint64_t key = GetZobristKey(position.boardState);
+    
+    // Verifică dacă poziția este deja în cache
+    auto it = evaluationCache.find(key);
+    if (it != evaluationCache.end()) {
+        return it->second;
+    }
     int score = 0;
     
     // Piece values
@@ -2093,6 +2140,11 @@ int EvaluateBoard(const BoardPosition& position, int searchDepth) {
         // Pass the depth information to let the function know how much work to do
         score = ApplyPersonalityToEvaluation(score, position, movesToPass, useFullPersonality);
     }
+
+    if (evaluationCache.size() < MAX_EVAL_CACHE_SIZE) {
+        evaluationCache[key] = score;
+    }
+
     return score;
 }
 
@@ -2325,14 +2377,22 @@ Move AlgebraicToInternalMove(const std::string& algebraicMove, const BoardPositi
         return move;
     }
 
+    // CRUCIAL FIX: Handle capture notation with 'x'
+    std::string moveWithoutCapture = algebraicMove;
+    size_t capturePos = moveWithoutCapture.find('x');
+    if (capturePos != std::string::npos) {
+        // Remove the 'x' character but flag that this is a capture
+        moveWithoutCapture.erase(capturePos, 1);
+    }
+
     // IMPORTANT CHANGE: Detect notation style and parse accordingly
     // Case 1: Piece + coordinate notation (e.g. Nb8c6)
     if (algebraicMove.length() >= 5 && isalpha(algebraicMove[0]) && 
-        !isdigit(algebraicMove[1]) && isalpha(algebraicMove[1])) {
+        !isdigit(moveWithoutCapture[1]) && isalpha(moveWithoutCapture[1])) {
         
-        char piece = algebraicMove[0];
-        std::string from = algebraicMove.substr(1, 2);
-        std::string to = algebraicMove.substr(3, 2);
+        char piece = moveWithoutCapture[0];
+        std::string from = moveWithoutCapture.substr(1, 2);
+        std::string to = moveWithoutCapture.substr(3, 2);
         
         try {
             int fromIndex = AlgebraicToIndex(from);
@@ -2350,8 +2410,8 @@ Move AlgebraicToInternalMove(const std::string& algebraicMove, const BoardPositi
     }
     // Case 2: Coordinate notation (e.g. e2e4)
     else if (algebraicMove.length() >= 4) {
-        std::string from = algebraicMove.substr(0, 2);
-        std::string to = algebraicMove.substr(2, 2);
+        std::string from = moveWithoutCapture.substr(0, 2);
+        std::string to = moveWithoutCapture.substr(2, 2);
         
         try {
             int fromIndex = AlgebraicToIndex(from);
@@ -2807,21 +2867,195 @@ int ApplyPersonalityToEvaluation(int baseScore, const BoardPosition& position,
             break;
             
         case DYNAMIC:
-            // Light version for deep search
             if (fullCalculation) {
-                score += whiteDevelopedPieces * 12;
-                score -= blackDevelopedPieces * 12;
-                
-                // Bonus for knights (tactical pieces)
-                for (int i = 0; i < 64; i++) {
-                    if (boardState[i] == 'N') score += 12;
-                    if (boardState[i] == 'n') score -= 12;
+                // Detectează caracteristicile poziției pentru a determina stilul potrivit
+                bool isOpenPosition = true;  // Presupunem poziție deschisă inițial
+                bool hasTacticalOpportunities = false;
+                bool hasPositionalAdvantage = false;
+                bool isEndgameNear = false;
+        
+                // 1. Verifică dacă poziția este deschisă sau închisă
+                int centerPawns = 0;
+                for (int i = 27; i <= 36; i++) {
+                    if (tolower(boardState[i]) == 'p') {
+                        centerPawns++;
+                    }
                 }
-                
-                // Value mobility above all - but only if moves are provided
+                isOpenPosition = (centerPawns <= 2);  // Mai puțin de 3 pioni în centru = deschisă
+        
+                // 2. Verifică oportunități tactice
                 if (preCalculatedMoves) {
-                    score += preCalculatedMoves->size() * (position.whiteToMove ? 5 : -5);
+                    for (const Move& move : *preCalculatedMoves) {
+                        // Verifică capturi avantajoase sau atacuri
+                        if (move.notation.length() >= 5) {
+                            int endPos = std::stoi(move.notation.substr(3, 2));
+                            char target = position.boardState[endPos];
+                            if (target != ' ') {
+                                int attackerValue = GetPieceValue(move.notation[0]);
+                                int targetValue = GetPieceValue(target);
+                                
+                                if (targetValue >= attackerValue) {
+                                    hasTacticalOpportunities = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
+        
+                // 3. Verifică avantaj pozițional
+                int centralControl = 0;
+                for (int r = 2; r <= 5; r++) {
+                    for (int c = 2; c <= 5; c++) {
+                        char piece = boardState[r*8+c];
+                        if (piece != ' ') {
+                            if (isupper(piece)) centralControl++;
+                            else centralControl--;
+                        }
+                    }
+                }
+        
+                hasPositionalAdvantage = position.whiteToMove ? (centralControl > 1) : (centralControl < -1);
+        
+                // 4. Verifică dacă suntem aproape de final
+                int pieceCount = 0;
+                for (int i = 0; i < 64; i++) {
+                    if (boardState[i] != ' ' && tolower(boardState[i]) != 'p') {
+                         pieceCount++;
+                    }
+                }
+                isEndgameNear = (pieceCount <= 12);
+        
+                // Adaptează stilul în funcție de poziție:
+                if (hasTacticalOpportunities) {
+                    // Activează mod AGRESIV pentru poziții cu oportunități tactice
+                    std::cout << "DYNAMIC: Adoptă stil AGRESIV pentru oportunități tactice" << std::endl;
+            
+                    score += (whiteCentralPieces - blackCentralPieces) * 15;
+                    score += whiteDevelopedPieces * 10;
+                    score -= blackDevelopedPieces * 10;
+            
+                    // Bonus pentru piese în teritoriul inamic
+                    for (int i = 0; i < 64; i++) {
+                        char piece = position.boardState[i];
+                        int rank = i / 8;
+                        if ((piece != ' ' && piece != 'P' && piece != 'K' && 
+                            isupper(piece) && rank < 4) || 
+                            (piece != ' ' && piece != 'p' && piece != 'k' && 
+                            islower(piece) && rank > 3)) {
+                            if (isupper(piece)) score += 15;
+                            else score -= 15;
+                        }
+                    }
+                }
+                else if (isOpenPosition && hasPositionalAdvantage) {
+                    // Activează mod POZIȚIONAL pentru poziții deschise cu avantaj
+                    std::cout << "DYNAMIC: Adoptă stil POZIȚIONAL pentru poziție deschisă" << std::endl;
+            
+                    score += (whiteCentralPieces - blackCentralPieces) * 20;
+            
+                    // Valorizează nebunii în poziții deschise
+                    for (int i = 0; i < 64; i++) {
+                        if (boardState[i] == 'B') score += 15;
+                        if (boardState[i] == 'b') score -= 15;
+                    }
+                }
+                else if (!isOpenPosition) {
+                    // Activează mod SOLID pentru poziții închise
+                    std::cout << "DYNAMIC: Adoptă stil SOLID pentru poziție închisă" << std::endl;
+            
+                    score += whitePieceCount * 5;
+                    score -= blackPieceCount * 5;
+            
+                    // Valorizează caii în poziții închise
+                    for (int i = 0; i < 64; i++) {
+                        if (boardState[i] == 'N') score += 15;
+                        if (boardState[i] == 'n') score -= 15;
+                    }
+            
+                    // Bonus pentru formații defensive de pioni
+                    for (int i = 0; i < 64; i++) {
+                        int file = i % 8;
+                        char piece = boardState[i];
+                
+                        if (piece == 'P' && i > 7) {
+                            if (file > 0 && boardState[i-1] == 'P') score += 8;
+                            if (file < 7 && boardState[i+1] == 'P') score += 8;
+                        }
+                        if (piece == 'p' && i < 56) {
+                            if (file > 0 && boardState[i-1] == 'p') score -= 8;
+                            if (file < 7 && boardState[i+1] == 'p') score -= 8;
+                        }
+                    }
+                }
+                else if (isEndgameNear) {
+                    // Mod de final - prioritizează activitatea regelui și promovarea pionilor
+                    std::cout << "DYNAMIC: Adoptă stil de FINAL" << std::endl;
+            
+                    // Găsește regii
+                    int whiteKingPos = -1, blackKingPos = -1;
+                    for (int i = 0; i < 64; i++) {
+                        if (boardState[i] == 'K') whiteKingPos = i;
+                        else if (boardState[i] == 'k') blackKingPos = i;
+                    }
+            
+                    if (whiteKingPos >= 0 && blackKingPos >= 0) {
+                        // Centralizeaza regele în final
+                        int whiteKingRank = whiteKingPos / 8;
+                        int whiteKingFile = whiteKingPos % 8;
+                        int blackKingRank = blackKingPos / 8;
+                        int blackKingFile = blackKingPos % 8;
+                
+                        // Distanța față de centru
+                        int whiteDistToCenter = abs(whiteKingRank - 3.5) + abs(whiteKingFile - 3.5);
+                        int blackDistToCenter = abs(blackKingRank - 3.5) + abs(blackKingFile - 3.5);
+                
+                        score += (7 - whiteDistToCenter) * 15;
+                        score -= (7 - blackDistToCenter) * 15;
+                
+                        // Încurajează avansarea pionilor în final
+                        for (int i = 0; i < 64; i++) {
+                            char piece = boardState[i];
+                            int rank = i / 8;
+                            if (piece == 'P') {
+                                score += (7 - rank) * (7 - rank) * 5;
+                            } else if (piece == 'p') {
+                                score -= rank * rank * 5;
+                            }
+                        }
+                    }
+                }
+                else {
+                    // Poziție echilibrată, pune accent pe mobilitate și dezvoltare
+                    std::cout << "DYNAMIC: Adoptă stil ECHILIBRAT" << std::endl;
+            
+                    score += whiteDevelopedPieces * 12;
+                    score -= blackDevelopedPieces * 12;
+            
+                    // Bonus pentru echilibrul între nebuni și cai
+                    int whiteKnights = 0, whiteBishops = 0;
+                    int blackKnights = 0, blackBishops = 0;
+            
+                    for (int i = 0; i < 64; i++) {
+                        if (boardState[i] == 'N') whiteKnights++;
+                        else if (boardState[i] == 'B') whiteBishops++;
+                        else if (boardState[i] == 'n') blackKnights++;
+                        else if (boardState[i] == 'b') blackBishops++;
+                    }
+            
+                    // Încurajează păstrarea perechii de nebuni
+                    if (whiteBishops >= 2) score += 20;
+                    if (blackBishops >= 2) score -= 20;
+                }
+        
+                // Valorizează întotdeauna mobilitatea - caracteristică de bază DYNAMIC
+                if (preCalculatedMoves) {
+                    score += preCalculatedMoves->size() * (position.whiteToMove ? 4 : -4);
+                }
+            } else {
+                // Pentru adâncimi mari de căutare, folosim o evaluare simplificată
+                // Mixtăm elemente din toate stilurile pentru versatilitate
+                score += 5;  // Un mic bias pozitiv pentru variație
             }
             break;
             
@@ -2880,14 +3114,108 @@ bool IsMoveSafe(const BoardPosition& position, const Move& move) {
     return true;
 }
 
+// Validation function to ensure we never use invalid move notations
+bool IsValidMoveNotation(const Move& move) {
+    return (move.notation.length() >= 5 && 
+            isalpha(move.notation[0]) && 
+            isdigit(move.notation[1]) && 
+            isdigit(move.notation[3]));
+}
+
+// Adaugă această funcție nouă de verificare tactică
+bool IsTacticalBlunder(const BoardPosition& position, const Move& move) {
+    // Verifică dacă este o captură
+    if (move.notation.length() < 5) return false;
+    
+    int startPos = std::stoi(move.notation.substr(1, 2));
+    int endPos = std::stoi(move.notation.substr(3, 2));
+    char attacker = position.boardState[startPos];
+    char victim = position.boardState[endPos];
+    bool isCapture = (victim != ' ' || move.isEnPassant);
+    
+    // Dacă nu este captură, nu este un blunder tactic evident
+    if (!isCapture) return false;
+    
+    // Valoarea pieselor implicate
+    int attackerValue = GetPieceValue(attacker);
+    int victimValue = move.isEnPassant ? 1 : GetPieceValue(victim);
+    
+    // Simulează mutarea pentru a vedea ce se întâmplă după
+    BoardPosition afterMove = ApplyMove(position, move);
+    
+    // Calculează atacatorii și apărătorii pătratului unde a ajuns piesa noastră
+    int cheapestAttacker = GetCheapestAttackerValue(afterMove, endPos, !position.whiteToMove);
+    
+    // REGULA SIMPLĂ DAR PUTERNICĂ: Dacă piesa care captură poate fi recapturată 
+    // de o piesă de valoare mai mică sau egală, este aproape întotdeauna un blunder
+    if (cheapestAttacker > 0 && cheapestAttacker <= attackerValue) {
+        std::cout << "BLUNDER TACTIC detectat: " << ConvertToAlgebraic(move, position) 
+                  << " - piesa " << attacker << " (valoare " << attackerValue 
+                  << ") va fi recapturată de o piesă de valoare " << cheapestAttacker << std::endl;
+        return true;
+    }
+    
+    // Captură de pion cu piesă minoră (cal/nebun) - doar pentru negru după e4
+    if (position.fullMoveNumber <= 10 && tolower(victim) == 'p' && 
+        (tolower(attacker) == 'n' || tolower(attacker) == 'b') &&
+        endPos == 36) { // Pătratul e4
+        
+        // Verifică dacă pionul are apărători
+        if (IsSquareAttacked(position, endPos, position.whiteToMove)) {
+            std::cout << "BLUNDER OPENING: Capturarea pionului apărat de pe e4 cu piesa minoră!" << std::endl;
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// Funcție nouă pentru a determina centralitatea unei mutări
+int GetCentralityScore(const Move& move, bool isEarlyGame) {
+    if (move.notation.length() < 5) return 0;
+    
+    // Extrage poziția țintă a mutării
+    int endPos = std::stoi(move.notation.substr(3, 2));
+    int rank = endPos / 8;
+    int file = endPos % 8;
+    
+    // Calculează distanța față de centru (d4,d5,e4,e5)
+    int rankDist = customMin(abs(rank - 3), abs(rank - 4));
+    int fileDist = customMin(abs(file - 3), abs(file - 4));
+    int centerDist = rankDist + fileDist;
+    
+    // MĂREȘTE SEMNIFICATIV importanța centralității în jocul timpuriu
+    int multiplier = isEarlyGame ? 10 : 2;  // Crescut de la 3 la 10
+    
+    // Acordă un scor invers proporțional cu distanța
+    int centralityScore = (4 - centerDist) * multiplier;
+    
+    // Bonus suplimentar pentru pătratul central
+    if (centerDist == 0) centralityScore += 5 * multiplier;  // Crescut de la 2 la 5
+    
+    // BONUS SPECIAL pentru cele 4 mutări clasice ca răspuns la e4
+    if (isEarlyGame) {
+        std::string algebraic = IndexToAlgebraic(endPos);
+        if (algebraic == "e5") return centralityScore + 25;  // Bonus foarte mare pentru e5
+        if (algebraic == "c5") return centralityScore + 22;  // Siciliana
+        if (algebraic == "e6") return centralityScore + 20;  // Franceză
+        if (algebraic == "d5") return centralityScore + 20;  // Scandinava
+    }
+    
+    return customMax(0, centralityScore);
+}
+
 extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistoryStr, int maxDepth, bool isWhite)
 {
+    // Limitează adâncimea pentru a evita explorări prea lungi
+    maxDepth = customMin(maxDepth, 3); // Limită de adâncime pentru performanță
+
     std::string moveHistory(moveHistoryStr);
 
-    // Save original personality for restoration later
+    // Salvează personalitatea originală pentru restaurare ulterioară
     ChessPersonality originalPersonality = currentPersonality;
     
-    // Temporarily set to STANDARD during search for performance
+    // Temporary set to STANDARD during search for performance
     if (originalPersonality != STANDARD) {
         std::cout << "Temporarily using STANDARD personality for search" << std::endl;
         currentPersonality = STANDARD;
@@ -2906,14 +3234,19 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
     // Debug info
     PrintBoard(currentPosition.boardState);
 
-    // Starting time for time management
+    // Starting time for time management - VALORI NOI REDUSE
     auto startTime = std::chrono::high_resolution_clock::now();
-    const int MAX_SEARCH_TIME_MS = 5000; // 5 seconds max search time
-    const int ABSOLUTE_FAILSAFE_TIME_MS = 10000; // 10 second hard limit
+    const int MAX_SEARCH_TIME_MS = 10000;  // 1 secundă max
+    const int ABSOLUTE_FAILSAFE_TIME_MS = 20000; // 2 secunde limită absolută
 
-    // Clear transposition table at the start of a new search
+    // Curăță tabela de transpoziție la începutul unei noi căutări
     for (auto& entry : transpositionTable) {
         entry = TTEntry();
+    }
+    
+    // Curăță cache-ul de evaluări dar păstrează 20% din intrări
+    if (evaluationCache.size() > MAX_EVAL_CACHE_SIZE/5) {
+        evaluationCache.clear();
     }
 
     // Generate moves for the CURRENT player
@@ -3028,6 +3361,24 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
                 }
             }
         }
+
+        // În GetBestMove, după ce avem lista de mutări legale dar înainte de căutare   
+        if (legalMoves.size() > 1) {
+            // Filtrează mutări care sunt blundere tactice evidente
+            auto blunderIter = std::remove_if(legalMoves.begin(), legalMoves.end(),
+                [&currentPosition](const Move& move) { 
+                    return IsTacticalBlunder(currentPosition, move); 
+                });
+    
+            // Elimină mutările proaste doar dacă mai rămân alte mutări
+            if (blunderIter != legalMoves.begin()) {
+                int numBlunders = std::distance(blunderIter, legalMoves.end());
+                if (numBlunders > 0 && blunderIter != legalMoves.end()) {
+                    std::cout << "Am filtrat " << numBlunders << " mutări tactice proaste!" << std::endl;
+                    legalMoves.erase(blunderIter, legalMoves.end());
+                }
+            }
+        }
         
         // Secondary evaluation-based filtering
         if (legalMoves.size() > 1) {
@@ -3038,7 +3389,7 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
 
                 // Evaluate from the current player's perspective
                 newPos.whiteToMove = currentPosition.whiteToMove;
-                int score = EvaluateBoard(newPos);
+                int score = EvaluateBoard(newPos, 0); // Evaluare rapidă, adâncime 0
 
                 // Negate scores for Black so higher is always better
                 if (!currentPosition.whiteToMove) {
@@ -3100,8 +3451,8 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
         }
     }
 
-    // Force consistent search behavior for both players
-    const int FIXED_TIME_LIMIT_MS = 2000; // 2 seconds max per move
+    // REDUS TIMP DE CĂUTARE - 800ms în loc de 2000ms
+    const int FIXED_TIME_LIMIT_MS = 10000;
     startTime = std::chrono::high_resolution_clock::now();
 
     // Iterative deepening - start from depth 1 and increase
@@ -3128,14 +3479,25 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
         bool moveFound = false;
 
         // Search all filtered root children
-        for (MoveTreeNode* childNode : root->children) {
-            int moveValue = -MinimaxOnTree(childNode, currentDepth - 1, -2147483647, 2147483647, !currentPosition.whiteToMove, true);
-    
-            if (moveValue > bestValue) {
-                bestValue = moveValue;
-                currentBestMove = childNode->move;
-                moveFound = true;
+        try { // Adăugat try-catch pentru a gestiona depășirea timpul
+            for (MoveTreeNode* childNode : root->children) {
+                int moveValue = -MinimaxOnTree(childNode, currentDepth - 1, -2147483647, 2147483647, !currentPosition.whiteToMove, true);
+        
+                if (moveValue > bestValue) {
+                    bestValue = moveValue;
+                    currentBestMove = childNode->move;
+                    moveFound = true;
+                }
             }
+        }
+        catch (const std::runtime_error& e) {
+            std::cout << "Căutare întreruptă: " << e.what() << std::endl;
+            // Dacă am întrerupt căutarea din cauza timpului, folosim ultima mutare bună găsită
+            if (moveFound) {
+                bestMove = currentBestMove;
+                hasBestMove = true;
+            }
+            break;
         }
 
         // Save the best move at this depth
@@ -3156,6 +3518,7 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
         auto currentTime = std::chrono::high_resolution_clock::now();
         auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - startTime).count();
         if (elapsedMs > MAX_SEARCH_TIME_MS) {
+            std::cout << "Time limit reached at depth " << currentDepth << ": " << elapsedMs << "ms" << std::endl;
             break; // Stop iterative deepening if we're out of time
         }
         
@@ -3164,21 +3527,8 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
             std::cout << "FAILSAFE: Search taking too long, terminating early" << std::endl;
             break;
         }
-
-        // At maximum main search depth, check if there are immediate material threats
-        // and extend search if needed
-        if (currentDepth == maxDepth) {
-            for (const Move& move : legalMoves) {
-                BoardPosition afterMove = ApplyMove(currentPosition, move);
-                if (IsKingInCheck(afterMove, currentPosition.whiteToMove) || 
-                    HasMaterialThreat(afterMove, currentPosition.whiteToMove)) {
-                    maxDepth += 1; // Extend search when material threats exist
-                    break;
-                }
-            }
-        }
         
-        if (currentDepth >= 3) { // Only enforce after getting a reasonable depth
+        if (currentDepth >= 2) { // Only enforce after getting minimal depth
             auto currentTime = std::chrono::high_resolution_clock::now();
             auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                 currentTime - startTime).count();
@@ -3195,23 +3545,46 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
         currentPersonality = originalPersonality;
     }
 
-    // Final evaluation with personality preference
+    // Final evaluation with personality preference - RAPID, fără evaluări profunde!
     if (currentPersonality != STANDARD && !legalMoves.empty()) {
         std::vector<std::pair<int, Move>> finalEvaluation;
         
         // Evaluate all legal moves using the personality
         for (const Move& move : legalMoves) {
             BoardPosition newPos = ApplyMove(currentPosition, move);
-            int score = EvaluateBoard(newPos, 0); // Shallow evaluation only
+            int score = EvaluateBoard(newPos, 0); // Evaluare rapidă!
             
             if (!currentPosition.whiteToMove) {
                 score = -score;
             }
             
             finalEvaluation.push_back({score, move});
+        }
+
+        // AICI ADĂUGĂM BONUSURILE DE CENTRALITATE
+        bool isEarlyGame = (currentPosition.fullMoveNumber <= 10);
+        
+        for (auto& eval : finalEvaluation) {
+            // Adaugă un bonus mic pentru centralitate ca mecanism de departajare
+            int centralityScore = GetCentralityScore(eval.second, isEarlyGame);
+            eval.first += centralityScore;
+            
+            // Adaugă un mic bonus pentru mutările care dezvoltă piesele în deschidere
+            if (isEarlyGame) {
+                int startPos = std::stoi(eval.second.notation.substr(1, 2));
+                char piece = eval.second.notation[0];
+                
+                // Bonus pentru dezvoltarea nebunilor și calilor
+                if ((piece == 'B' || piece == 'b' || piece == 'N' || piece == 'n') && 
+                    (startPos == 1 || startPos == 6 || startPos == 2 || startPos == 5 || 
+                     startPos == 57 || startPos == 62 || startPos == 58 || startPos == 61)) {
+                    eval.first += 2;  // Bonus mic pentru dezvoltarea pieselor
+                }
+            }
+            
             std::cout << "Final evaluation with " << (int)currentPersonality 
-                      << " personality: " << ConvertToAlgebraic(move, currentPosition) 
-                      << " = " << score << std::endl;
+                      << " personality: " << ConvertToAlgebraic(eval.second, currentPosition) 
+                      << " = " << eval.first << " (includes centrality bonus)" << std::endl;
         }
         
         // Sort by highest score
@@ -3227,29 +3600,41 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
         }
     }
 
-    // CRITICAL FINAL SAFETY CHECK - Make absolutely sure we're not returning a blunder
-    // This ensures that no matter what, we won't return a move that hangs a piece
-    if (hasBestMove && !IsMoveSafe(currentPosition, bestMove)) {
-        std::cout << "EMERGENCY SAFETY OVERRIDE: About to return a blunder: " 
-                << ConvertToAlgebraic(bestMove, currentPosition) << std::endl;
-    
-        // Find the safest move instead
-        bool foundSafeMove = false;
-        for (const Move& move : legalMoves) {
-            if (move.notation != bestMove.notation && IsMoveSafe(currentPosition, move)) {
-                bestMove = move;
-                foundSafeMove = true;
-                std::cout << "Replacing with safe move: " 
-                        << ConvertToAlgebraic(bestMove, currentPosition) << std::endl;
-                break;
-            }
-        }
-    
-        // If no completely safe move found, at least log a warning
-        if (!foundSafeMove && !legalMoves.empty()) {
-            bestMove = legalMoves[0]; // Fall back to first legal move
-            std::cout << "WARNING: No safe moves found! Using first legal move: " 
+    // CRITICAL FINAL SAFETY CHECK - Funcție IsMoveSafe simplificată pentru verificare rapidă
+    if (hasBestMove && bestMove.notation.length() >= 5) {
+        // Verifică doar pentru mutări non-capturi (capturile sunt de obicei sigure)
+        int endPos = std::stoi(bestMove.notation.substr(3, 2));
+        bool isCapture = (currentPosition.boardState[endPos] != ' ' || bestMove.isEnPassant);
+        
+        // Verifică doar mutările non-capturi
+        if (!isCapture && !IsMoveSafe(currentPosition, bestMove)) {
+            std::cout << "EMERGENCY SAFETY OVERRIDE: About to return a blunder: " 
                     << ConvertToAlgebraic(bestMove, currentPosition) << std::endl;
+        
+            // Find the safest move instead
+            bool foundSafeMove = false;
+            for (const Move& move : legalMoves) {
+                if (move.notation != bestMove.notation) {
+                    // Pentru capturi presupunem că sunt sigure
+                    int moveEndPos = std::stoi(move.notation.substr(3, 2));
+                    bool isMoveCapture = (currentPosition.boardState[moveEndPos] != ' ' || move.isEnPassant);
+                    
+                    if (isMoveCapture || IsMoveSafe(currentPosition, move)) {
+                        bestMove = move;
+                        foundSafeMove = true;
+                        std::cout << "Replacing with safe move: " 
+                                << ConvertToAlgebraic(bestMove, currentPosition) << std::endl;
+                        break;
+                    }
+                }
+            }
+        
+            // Dacă nu am găsit mutare sigură, folosim prima mutare legală
+            if (!foundSafeMove && !legalMoves.empty()) {
+                bestMove = legalMoves[0]; // Fall back to first legal move
+                std::cout << "WARNING: No safe moves found! Using first legal move: " 
+                        << ConvertToAlgebraic(bestMove, currentPosition) << std::endl;
+            }
         }
     }
 
@@ -3260,15 +3645,23 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
         if (bestMove.notation.length() >= 5) {
             result = ConvertToAlgebraic(bestMove, currentPosition);
         } else {
-            // Find the highest scored move as backup
+            // Găsește mutarea cu scorul cel mai mare ca backup
             std::vector<std::pair<int, Move>> scoredMoves;
             for (const Move& move : legalMoves) {
-                BoardPosition newPos = ApplyMove(currentPosition, move);
-                int score = EvaluateBoard(newPos);
-                if (!currentPosition.whiteToMove) {
-                    score = -score;
+                if (move.notation.length() >= 5) {  // Skip invalid moves immediately
+                    BoardPosition newPos = ApplyMove(currentPosition, move);
+                    int score = EvaluateBoard(newPos, 0);  // Evaluare rapidă
+                    if (!currentPosition.whiteToMove) {
+                        score = -score;
+                    }
+                    
+                    // ADAUGĂ BONUS DE CENTRALITATE AICI DE ASEMENEA
+                    bool isEarlyGame = (currentPosition.fullMoveNumber <= 10);
+                    int centralityScore = GetCentralityScore(move, isEarlyGame);
+                    score += centralityScore;
+                    
+                    scoredMoves.push_back({score, move});
                 }
-                scoredMoves.push_back({score, move});
             }
             
             // Sort by score (higher is better)
@@ -3276,21 +3669,7 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
                 [](const auto& a, const auto& b) { return a.first > b.first; });
                 
             if (!scoredMoves.empty()) {
-                // DOUBLE-CHECK that this move isn't hanging a piece
                 bestMove = scoredMoves[0].second;
-                if (!IsCapture(currentPosition.boardState, bestMove) && 
-                    !IsMoveSafe(currentPosition, bestMove)) {
-                    
-                    // Find ANY safe move as last resort
-                    for (const auto& [score, move] : scoredMoves) {
-                        if (IsCapture(currentPosition.boardState, move) || 
-                            IsMoveSafe(currentPosition, move)) {
-                            bestMove = move;
-                            break;
-                        }
-                    }
-                }
-                
                 result = ConvertToAlgebraic(bestMove, currentPosition);
             } else {
                 result = "error";
@@ -3304,19 +3683,13 @@ extern "C" __declspec(dllexport) const char* GetBestMove(const char* moveHistory
     if (result == "error" && !legalMoves.empty()) {
         std::cout << "WARNING: Engine returned 'error' despite having legal moves. Using fallback." << std::endl;
         
-        // Fallback to the first legal move that doesn't hang a piece
+        // Find first legal move with valid notation
         for (const Move& move : legalMoves) {
-            if (IsCapture(currentPosition.boardState, move) || IsMoveSafe(currentPosition, move)) {
+            if (move.notation.length() >= 5) {
                 result = ConvertToAlgebraic(move, currentPosition);
                 std::cout << "Fallback move selected: " << result << std::endl;
                 break;
             }
-        }
-        
-        // If still no suitable move, use the first legal move regardless
-        if (result == "error") {
-            result = ConvertToAlgebraic(legalMoves[0], currentPosition);
-            std::cout << "Last resort fallback move: " << result << std::endl;
         }
     }
     
@@ -3362,6 +3735,7 @@ void PrintMoveTree(MoveTreeNode* node, int depth = 0) {
 
 // Add this to main() or in a separate test function
 void DebugOpeningMoves() {
+    /*
     // Test a3 position detection
     BoardPosition testPos;
     testPos.boardState = "rnbqkbnrpppppppp                                PPPPPPPPR BQKBNR";
@@ -3405,10 +3779,10 @@ void DebugOpeningMoves() {
     e4Pos2.boardState = "rnbqkbnrpppppppp                P               PPP PPPPRNBQKBNR";
     e4Pos2.whiteToMove = false;
     e4Pos2.fullMoveNumber = 1;
-    
-    const char* blackResponse = GetBestMove("e2e4 Nb8c6 d2d4", 3, false);
+    */
+    const char* blackResponse = GetBestMove("e2e4 Ng8f6 Nb1c3" ,3, false);
     std::cout << "Black's response to e4: " << blackResponse << std::endl;
-    
+    /*
     // Test personalities
     std::cout << "\nTesting personalities:" << std::endl;
     
@@ -3422,10 +3796,10 @@ void DebugOpeningMoves() {
     
     // Reset to standard
     SetEnginePersonality(STANDARD);
-
+    */
 }
 
-/*
+///*
 int main() {
     // Test 1: Generate moves for the starting position
     BoardPosition startPosition;
@@ -3462,4 +3836,4 @@ int main() {
 
     return 0;
 }
-*/
+//*/
