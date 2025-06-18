@@ -1552,21 +1552,21 @@ public class ChessGameManager : MonoBehaviour
     }
 
     public bool IsTileAttacked(Vector2Int targetPos, bool isWhite, Vector2Int? ignorePos = null)
-{
-    foreach (var piece in _pieces.Values)
     {
-        ChessPiece chessPiece = piece.GetComponent<ChessPiece>();
-        if (chessPiece != null && chessPiece.isWhite != isWhite)
+        foreach (var piece in _pieces.Values)
         {
-            Vector2Int piecePos = GetPiecePosition(chessPiece);
-            if (IsAttackingTile(chessPiece, piecePos, targetPos, ignorePos))
+            ChessPiece chessPiece = piece.GetComponent<ChessPiece>();
+            if (chessPiece != null && chessPiece.isWhite != isWhite)
             {
-                return true;
+                Vector2Int piecePos = GetPiecePosition(chessPiece);
+                if (IsAttackingTile(chessPiece, piecePos, targetPos, ignorePos))
+                {
+                    return true;
+                }
             }
         }
+        return false;
     }
-    return false;
-}
 
 private bool IsAttackingTile(ChessPiece piece, Vector2Int piecePos, Vector2Int targetPos, Vector2Int? ignorePos = null)
 {

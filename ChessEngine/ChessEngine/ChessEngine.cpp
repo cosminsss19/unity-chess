@@ -2791,7 +2791,7 @@ int ApplyPersonalityToEvaluation(int baseScore, const BoardPosition& position,
                         int endPos = std::stoi(move.notation.substr(3, 2));
                         char target = position.boardState[endPos];
                         if (target != ' ') {
-                            // Simplified capture analysis - NO IsGoodCapture call!
+                            // Simplified capture analysis
                             int attackerValue = GetPieceValue(move.notation[0]);
                             int targetValue = GetPieceValue(target);
                             
@@ -3068,7 +3068,6 @@ int ApplyPersonalityToEvaluation(int baseScore, const BoardPosition& position,
     return score;
 }
 
-// Add this function to check if a move will hang a piece
 bool IsMoveSafe(const BoardPosition& position, const Move& move) {
     // Check if it's a capture move
     int endPos = std::stoi(move.notation.substr(3, 2));
