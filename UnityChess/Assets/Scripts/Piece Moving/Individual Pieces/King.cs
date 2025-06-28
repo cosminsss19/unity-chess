@@ -25,14 +25,11 @@ public class King : ChessPiece
                 moves.Add(pos);
         }
 
-        // Castling
         if (!hasMoved)
         {
-            // Check for kingside castling
             if (IsKingsideCastlingPossible(currentPos))
                 moves.Add(currentPos + Vector2Int.up * 2);
 
-            // Check for queenside castling
             if (IsQueensideCastlingPossible(currentPos))
                 moves.Add(currentPos + Vector2Int.down * 2);
         }

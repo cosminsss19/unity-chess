@@ -30,22 +30,18 @@ namespace Piece_Moving.Helpful_Scripts
         solidButton.onClick.AddListener(() => SetPersonality(ChessPersonality.SOLID));
         dynamicButton.onClick.AddListener(() => SetPersonality(ChessPersonality.DYNAMIC));
     
-        // Highlight standard as default
         UpdatePersonalityButtons();
         
-        // Ensure GameSettingsManager exists
         if (GameSettingsManager.Instance == null)
         {
             GameObject settingsManager = new GameObject("GameSettingsManager");
             settingsManager.AddComponent<GameSettingsManager>();
         }
         
-        // Set up button listeners
         playerVsComputerButton.onClick.AddListener(() => SelectGameMode(true));
         playerVsPlayerButton.onClick.AddListener(() => SelectGameMode(false));
         playButton.onClick.AddListener(StartGame);
         
-        // Initial state
         personalityPanel.SetActive(true);
         playerVsComputerButton.GetComponent<Image>().color = Color.green;
         playerVsPlayerButton.GetComponent<Image>().color = Color.white;
@@ -74,7 +70,6 @@ namespace Piece_Moving.Helpful_Scripts
         vsComputer = vsComp;
         personalityPanel.SetActive(vsComp);
         
-        // Visual feedback
         playerVsComputerButton.GetComponent<Image>().color = vsComp ? Color.green : Color.white;
         playerVsPlayerButton.GetComponent<Image>().color = vsComp ? Color.white : Color.green;
     }
@@ -85,7 +80,6 @@ namespace Piece_Moving.Helpful_Scripts
         
         if (vsComputer)
         {
-            // Set who plays as white
             GameSettingsManager.Instance.SetComputerSide(!playerAsWhiteToggle.isOn);
             
             GameSettingsManager.Instance.SetComputerPersonality(selectedPersonality);

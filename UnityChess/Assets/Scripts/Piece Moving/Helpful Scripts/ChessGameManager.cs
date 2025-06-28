@@ -25,7 +25,7 @@ public class PieceDetails
 
 public class ChessGameManager : MonoBehaviour
 {
-    public GameObject board; // The parent board GameObject
+    public GameObject board;
     private Dictionary<string, GameObject> _tiles = new();
     private Dictionary<Vector2Int, GameObject> _pieces = new();
 
@@ -42,8 +42,8 @@ public class ChessGameManager : MonoBehaviour
     [Header("Promotion UI")]
     public GameObject promotionPanel;
     public Transform promotionPiecesContainer;
-    public GameObject whitePromotionPrefab; // Parent object containing prefabs
-    public GameObject blackPromotionPrefab; // Parent object containing prefabs
+    public GameObject whitePromotionPrefab;
+    public GameObject blackPromotionPrefab;
     private Vector2Int _promotionPosition;
     private bool _isWaitingForPromotion = false;
     
@@ -60,6 +60,8 @@ public class ChessGameManager : MonoBehaviour
     [Header("Audio")]
     [SerializeField] private AudioSource audioSource;
     [SerializeField] private AudioClip pieceMoveSound;
+    [SerializeField] private AudioClip checkSound;
+    [SerializeField] private AudioClip gameOverSound;
     
     [DllImport("ChessEngine")]
     private static extern IntPtr GetBestMove(string movesHistory, int depth, bool isWhite);
@@ -72,6 +74,16 @@ public class ChessGameManager : MonoBehaviour
     [SerializeField] private ChessPersonality computerPersonality = ChessPersonality.STANDARD;
     [SerializeField] private int computerSearchDepth = 3;
     
+    [SerializeField] private bool useOpeningSequence = true;
+    private readonly string[] openingSequence = new string[]
+    {
+        "e2e4", "c7c5", "Ng1f3", "d7d6", "d2d4", "c5d4", "Nf3d4", "Ng8f6", "Nb1c3"
+    };
+    
+    [Header("Game Over UI")]
+    [SerializeField] private GameObject gameOverPanel;
+    [SerializeField] private Text gameOverMessage;
+    [SerializeField] private Button playAgainButton;
     private void Start()
     {
         if (GameSettingsManager.Instance != null)
@@ -81,7 +93,14 @@ public class ChessGameManager : MonoBehaviour
             computerPersonality = GameSettingsManager.Instance.ComputerPersonality;
         }
         SetEnginePersonality((int)computerPersonality);
-        StartFunction();
+        if (useOpeningSequence && playAgainstComputer)
+        {
+            StartCoroutine(ApplyOpeningSequence());
+        }
+        else
+        {
+            StartFunction();
+        }
         if (promotionPanel != null)
             promotionPanel.SetActive(false);
         RectTransform promotionPanelRect = promotionPanel.GetComponent<RectTransform>();
@@ -91,7 +110,7 @@ public class ChessGameManager : MonoBehaviour
         promotionPanelRect.anchoredPosition = Vector2.zero;
 
         string moves = string.Join(" ", moveHistory);
-        int depth = 3; // Example depth
+        int depth = 3;
         IntPtr bestMovePtr = GetBestMove(moves, depth, !computerPlaysBlack);
         string bestMove = Marshal.PtrToStringAnsi(bestMovePtr);
         Debug.Log("Best Move: " + bestMove);
@@ -100,6 +119,131 @@ public class ChessGameManager : MonoBehaviour
             StartCoroutine(MakeComputerMove());
         }
         
+    }
+    
+    private IEnumerator ApplyOpeningSequence()
+    {
+        StartFunction();
+
+        yield return new WaitUntil(() => _pieces.Count > 0);
+        yield return new WaitForSeconds(0.2f);
+
+        Debug.Log("Applying opening sequence...");
+    
+        foreach (string moveNotation in openingSequence)
+        {
+            (Vector2Int fromPos, Vector2Int toPos) = ParseNotation(moveNotation);
+        
+            if (!_pieces.ContainsKey(fromPos))
+            {
+                Debug.LogWarning($"Skipping move {moveNotation}: No piece at {fromPos}");
+                continue;
+            }
+        
+            GameObject movingPiece = _pieces[fromPos];
+            ChessPiece piece = movingPiece.GetComponent<ChessPiece>();
+        
+            if (_pieces.ContainsKey(toPos))
+            {
+                Destroy(_pieces[toPos]);
+                _pieces.Remove(toPos);
+            }
+        
+            _pieces.Remove(fromPos);
+            _pieces[toPos] = movingPiece;
+        
+            movingPiece.transform.position = GetTileCenter(toPos) + Constants.offset;
+        
+            if (piece != null)
+            {
+                piece.hasMoved = true;
+            }
+        
+            moveHistory.Add(moveNotation);
+        }
+    
+        isWhiteTurn = false;
+    
+        Debug.Log("Opening position set up. Black to move.");
+    
+        if (playAgainstComputer && computerPlaysBlack)
+        {
+            StartCoroutine(MakeComputerMove());
+        }
+    }
+
+    private (Vector2Int from, Vector2Int to) ParseNotation(string move)
+    {
+        if (move == "O-O")
+        {
+            return isWhiteTurn ? 
+                (new Vector2Int(0, 4), new Vector2Int(0, 6)) : 
+                (new Vector2Int(7, 4), new Vector2Int(7, 6));
+        }
+        else if (move == "O-O-O")
+        {
+            return isWhiteTurn ? 
+                (new Vector2Int(0, 4), new Vector2Int(0, 2)) : 
+                (new Vector2Int(7, 4), new Vector2Int(7, 2));
+        }
+    
+        string cleanMove = move;
+        if (move.Length > 4 && char.IsUpper(move[0]))
+        {
+            cleanMove = move.Substring(1);
+        }
+    
+        int fromFile = cleanMove[0] - 'a';
+        int fromRank = cleanMove[1] - '1';
+        int toFile = cleanMove[2] - 'a';
+        int toRank = cleanMove[3] - '1';
+    
+        return (new Vector2Int(fromRank, fromFile), new Vector2Int(toRank, toFile));
+    }
+    private (Vector2Int from, Vector2Int to, string promotion) ParseUciMove(string uciMove)
+    {
+        if (uciMove == "O-O")
+        {
+            return isWhiteTurn ? 
+                (new Vector2Int(0, 4), new Vector2Int(0, 6), null) : 
+                (new Vector2Int(7, 4), new Vector2Int(7, 6), null);
+        }
+        else if (uciMove == "O-O-O")
+        {
+            return isWhiteTurn ? 
+                (new Vector2Int(0, 4), new Vector2Int(0, 2), null) : 
+                (new Vector2Int(7, 4), new Vector2Int(7, 2), null);
+        }
+    
+        string cleanMove = uciMove;
+        if (uciMove.Length > 0 && char.IsUpper(uciMove[0]) && "NBRQK".Contains(uciMove[0]))
+        {
+            cleanMove = uciMove.Substring(1);
+        }
+        cleanMove = cleanMove.Replace("x", "");
+    
+        if (cleanMove.Length < 4) return (Vector2Int.zero, Vector2Int.zero, null);
+    
+        char fromFileChar = cleanMove[0];
+        char fromRankChar = cleanMove[1];
+        char toFileChar = cleanMove[2];
+        char toRankChar = cleanMove[3];
+    
+        int fromFile = fromFileChar - 'a';
+        int fromRank = fromRankChar - '1';
+        int toFile = toFileChar - 'a';
+        int toRank = toRankChar - '1';
+    
+        Vector2Int fromPos = new Vector2Int(fromRank, fromFile);
+        Vector2Int toPos = new Vector2Int(toRank, toFile);
+    
+        string promotion = null;
+        if (cleanMove.Length > 4)
+        {
+            promotion = GetPromotionTypeFromChar(cleanMove[4]);
+        }
+    
+        return (fromPos, toPos, promotion);
     }
     private void LogMoveHistory()
     {
@@ -110,7 +254,6 @@ public class ChessGameManager : MonoBehaviour
             bool isWhiteMove = moveHistory.Count % 2 == 1;
             string playerColor = isWhiteMove ? "White" : "Black";
 
-            // Special cases: castling and promotion are already handled correctly
             if (lastMove == "O-O" || lastMove == "O-O-O" || 
                 (lastMove.Length >= 5 && lastMove.Contains("=")))
             {
@@ -118,7 +261,6 @@ public class ChessGameManager : MonoBehaviour
                 return;
             }
 
-            // For regular moves, we already have piece notation in the format we want
             Debug.Log($"Move {moveNumber}{(isWhiteMove ? "." : "...")} {playerColor}: {lastMove}");
         }
     }
@@ -126,11 +268,10 @@ public class ChessGameManager : MonoBehaviour
     {
         await Task.Delay(1000);
 
-        // Wait for the piece generation to complete
         while (!ArePiecesGenerated())
         {
             Debug.Log("Waiting for pieces to be generated...");
-            await Task.Delay(100); // Check every 100ms
+            await Task.Delay(100);
         }
 
         Debug.Log("Pieces generated. Initializing board and pieces...");
@@ -140,7 +281,6 @@ public class ChessGameManager : MonoBehaviour
 
     private bool ArePiecesGenerated()
     {
-        // Implement this method to return true when pieces are generated
         bool piecesGenerated = board.transform.childCount > 0 && board.transform.GetComponentsInChildren<ChessPiece>().Length > 0;
         Debug.Log($"ArePiecesGenerated: {piecesGenerated}");
         return piecesGenerated;
@@ -191,6 +331,22 @@ public class ChessGameManager : MonoBehaviour
         }
     }
     
+    private void PlayCheckSound()
+    {
+        if (audioSource != null && checkSound != null)
+        {
+            audioSource.PlayOneShot(checkSound);
+        }
+    }
+    
+    private void PlayGameOverSound()
+    {
+        if (audioSource != null && gameOverSound != null)
+        {
+            audioSource.PlayOneShot(gameOverSound);
+        }
+    }
+    
     public void OnTileClicked(Vector2Int tilePos)
     {
         string tileName = _tiles.FirstOrDefault(t => t.Value.GetComponent<ChessTile>().tilePos == tilePos).Key;
@@ -219,7 +375,6 @@ public class ChessGameManager : MonoBehaviour
                     if (selectedPiece.IsValidMove(tilePos))
                     {
                         MovePiece(selectedPiece, tilePos);
-                        // Remove the EndTurn() call here - it's already called in MovePiece
                     }
                 }
                 else
@@ -233,7 +388,6 @@ public class ChessGameManager : MonoBehaviour
     
     private void SetBoardInteraction(bool enabled)
     {
-        // Disable/enable all chess piece colliders
         foreach (var piece in _pieces.Values)
         {
             if (piece != null)
@@ -246,7 +400,6 @@ public class ChessGameManager : MonoBehaviour
             }
         }
 
-        // Disable/enable all tile colliders
         foreach (var tile in _tiles.Values)
         {
             if (tile != null)
@@ -261,126 +414,109 @@ public class ChessGameManager : MonoBehaviour
     }
     
     private void ShowPromotionUI(bool isWhite)
-{
-    Debug.Log("ShowPromotionUI called for " + (isWhite ? "white" : "black"));
-
-    SetBoardInteraction(false);
-    // Clear existing promotion panel contents
-    foreach (Transform child in promotionPanel.transform)
     {
-        Destroy(child.gameObject);
+        Debug.Log("ShowPromotionUI called for " + (isWhite ? "white" : "black"));
+
+        SetBoardInteraction(false);
+        foreach (Transform child in promotionPanel.transform)
+        {
+            Destroy(child.gameObject);
+        }
+
+        RectTransform promotionPanelRect = promotionPanel.GetComponent<RectTransform>();
+        promotionPanelRect.anchorMin = Vector2.zero;
+        promotionPanelRect.anchorMax = Vector2.one;
+        promotionPanelRect.offsetMin = Vector2.zero;
+        promotionPanelRect.offsetMax = Vector2.zero;
+
+        CanvasGroup panelCanvasGroup = promotionPanel.GetComponent<CanvasGroup>();
+        if (panelCanvasGroup == null)
+            panelCanvasGroup = promotionPanel.AddComponent<CanvasGroup>();
+    
+        panelCanvasGroup.blocksRaycasts = true;
+        panelCanvasGroup.interactable = true;
+        panelCanvasGroup.ignoreParentGroups = true;
+
+        GameObject overlay = new GameObject("DarkeningOverlay");
+        overlay.transform.SetParent(promotionPanel.transform, false);
+    
+        Image overlayImage = overlay.AddComponent<Image>();
+        overlayImage.color = new Color(0, 0, 0, 0.75f);
+        overlayImage.raycastTarget = true;
+    
+        RectTransform overlayRect = overlay.GetComponent<RectTransform>();
+        overlayRect.anchorMin = Vector2.zero;
+        overlayRect.anchorMax = Vector2.one;
+        overlayRect.offsetMin = Vector2.zero;
+        overlayRect.offsetMax = Vector2.zero;
+        overlayRect.SetAsFirstSibling();
+
+        GameObject inputBlocker = new GameObject("InputBlocker");
+        inputBlocker.transform.SetParent(promotionPanel.transform, false);
+    
+        Image blockerImage = inputBlocker.AddComponent<Image>();
+        blockerImage.color = new Color(0, 0, 0, 0.01f);
+        blockerImage.raycastTarget = true;
+    
+        RectTransform blockerRect = inputBlocker.GetComponent<RectTransform>();
+        blockerRect.anchorMin = Vector2.zero;
+        blockerRect.anchorMax = Vector2.one;
+        blockerRect.offsetMin = Vector2.zero;
+        blockerRect.offsetMax = Vector2.zero;
+
+        GameObject buttonPanel = new GameObject("ButtonPanel");
+        buttonPanel.transform.SetParent(promotionPanel.transform, false);
+        buttonPanel.AddComponent<CanvasGroup>().blocksRaycasts = true;
+    
+        Image buttonPanelImage = buttonPanel.AddComponent<Image>();
+        buttonPanelImage.color = new Color(0.2f, 0.2f, 0.2f, 0.9f);
+    
+        RectTransform buttonPanelRect = buttonPanel.GetComponent<RectTransform>();
+        buttonPanelRect.anchorMin = new Vector2(0.5f, 0.5f);
+        buttonPanelRect.anchorMax = new Vector2(0.5f, 0.5f);
+        buttonPanelRect.pivot = new Vector2(0.5f, 0.5f);
+        buttonPanelRect.sizeDelta = new Vector2(400, 120);
+    
+        HorizontalLayoutGroup layout = buttonPanel.AddComponent<HorizontalLayoutGroup>();
+        layout.spacing = 10;
+        layout.childAlignment = TextAnchor.MiddleCenter;
+        layout.padding = new RectOffset(20, 20, 20, 20);
+        layout.childControlWidth = false;
+        layout.childControlHeight = false;
+    
+        string spritePath = isWhite ? "WhitePieces/" : "BlackPieces/";
+        CreatePromotionButton(buttonPanel.transform, spritePath + "Queen", "Queen");
+        CreatePromotionButton(buttonPanel.transform, spritePath + "Rook", "Rook");
+        CreatePromotionButton(buttonPanel.transform, spritePath + "Bishop", "Bishop");
+        CreatePromotionButton(buttonPanel.transform, spritePath + "Knight", "Knight");
+    
+        promotionPanel.SetActive(true);
+        promotionPanel.transform.SetAsLastSibling();
     }
-
-    // Make sure promotion panel covers the entire screen
-    RectTransform promotionPanelRect = promotionPanel.GetComponent<RectTransform>();
-    promotionPanelRect.anchorMin = Vector2.zero;
-    promotionPanelRect.anchorMax = Vector2.one;
-    promotionPanelRect.offsetMin = Vector2.zero;
-    promotionPanelRect.offsetMax = Vector2.zero;
-
-    // Add a canvas group to the panel to control input blocking
-    CanvasGroup panelCanvasGroup = promotionPanel.GetComponent<CanvasGroup>();
-    if (panelCanvasGroup == null)
-        panelCanvasGroup = promotionPanel.AddComponent<CanvasGroup>();
-    
-    panelCanvasGroup.blocksRaycasts = true;
-    panelCanvasGroup.interactable = true;
-    panelCanvasGroup.ignoreParentGroups = true;
-
-    // Create overlay with input blocker
-    GameObject overlay = new GameObject("DarkeningOverlay");
-    overlay.transform.SetParent(promotionPanel.transform, false);
-    
-    // Add image component for visual effect
-    Image overlayImage = overlay.AddComponent<Image>();
-    overlayImage.color = new Color(0, 0, 0, 0.75f);
-    overlayImage.raycastTarget = true;
-    
-    // Force the overlay to be full screen
-    RectTransform overlayRect = overlay.GetComponent<RectTransform>();
-    overlayRect.anchorMin = Vector2.zero;
-    overlayRect.anchorMax = Vector2.one;
-    overlayRect.offsetMin = Vector2.zero;
-    overlayRect.offsetMax = Vector2.zero;
-    overlayRect.SetAsFirstSibling();
-
-    // Create dedicated input blocker that sits behind buttons but over the overlay
-    GameObject inputBlocker = new GameObject("InputBlocker");
-    inputBlocker.transform.SetParent(promotionPanel.transform, false);
-    
-    // Add transparent image as the raycast target
-    Image blockerImage = inputBlocker.AddComponent<Image>();
-    blockerImage.color = new Color(0, 0, 0, 0.01f); // Nearly invisible
-    blockerImage.raycastTarget = true;
-    
-    RectTransform blockerRect = inputBlocker.GetComponent<RectTransform>();
-    blockerRect.anchorMin = Vector2.zero;
-    blockerRect.anchorMax = Vector2.one;
-    blockerRect.offsetMin = Vector2.zero;
-    blockerRect.offsetMax = Vector2.zero;
-
-    // Create button panel on top
-    GameObject buttonPanel = new GameObject("ButtonPanel");
-    buttonPanel.transform.SetParent(promotionPanel.transform, false);
-    buttonPanel.AddComponent<CanvasGroup>().blocksRaycasts = true;
-    
-    Image buttonPanelImage = buttonPanel.AddComponent<Image>();
-    buttonPanelImage.color = new Color(0.2f, 0.2f, 0.2f, 0.9f);
-    
-    RectTransform buttonPanelRect = buttonPanel.GetComponent<RectTransform>();
-    buttonPanelRect.anchorMin = new Vector2(0.5f, 0.5f);
-    buttonPanelRect.anchorMax = new Vector2(0.5f, 0.5f);
-    buttonPanelRect.pivot = new Vector2(0.5f, 0.5f);
-    buttonPanelRect.sizeDelta = new Vector2(400, 120);
-    
-    // Add layout group
-    HorizontalLayoutGroup layout = buttonPanel.AddComponent<HorizontalLayoutGroup>();
-    layout.spacing = 10;
-    layout.childAlignment = TextAnchor.MiddleCenter;
-    layout.padding = new RectOffset(20, 20, 20, 20);
-    layout.childControlWidth = false;
-    layout.childControlHeight = false;
-    
-    // Create promotion buttons
-    string spritePath = isWhite ? "WhitePieces/" : "BlackPieces/";
-    CreatePromotionButton(buttonPanel.transform, spritePath + "Queen", "Queen");
-    CreatePromotionButton(buttonPanel.transform, spritePath + "Rook", "Rook");
-    CreatePromotionButton(buttonPanel.transform, spritePath + "Bishop", "Bishop");
-    CreatePromotionButton(buttonPanel.transform, spritePath + "Knight", "Knight");
-    
-    // Ensure the panel is active and on top
-    promotionPanel.SetActive(true);
-    promotionPanel.transform.SetAsLastSibling();
-}
 
     private void CreatePromotionButton(Transform parent, string spritePath, string pieceType)
     {
         GameObject button = new GameObject(pieceType + "Button");
         button.transform.SetParent(parent, false);
     
-        // Add button component and image
         Image image = button.AddComponent<Image>();
         image.color = Color.white;
     
-        // Load sprite from Resources
         Sprite sprite = Resources.Load<Sprite>(spritePath);
         if (sprite != null)
             image.sprite = sprite;
         else
             Debug.LogError($"Failed to load sprite: {spritePath}");
     
-        // Configure RectTransform
         RectTransform rect = button.GetComponent<RectTransform>();
         rect.sizeDelta = new Vector2(80, 80);
     
-        // Add button component
         Button buttonComp = button.AddComponent<Button>();
         ColorBlock colors = buttonComp.colors;
         colors.normalColor = Color.white;
         colors.highlightedColor = new Color(0.9f, 0.9f, 1f);
         buttonComp.colors = colors;
     
-        // Add listener
         buttonComp.onClick.AddListener(() => PromotePawn(pieceType));
     }
 
@@ -391,14 +527,12 @@ public class ChessGameManager : MonoBehaviour
         SetBoardInteraction(true);
         
         RecordPromotion(pieceType);
-        // Remove the pawn
         if (_pieces.TryGetValue(_promotionPosition, out GameObject pawn))
         {
             bool isWhite = pawn.GetComponent<ChessPiece>().isWhite;
             Destroy(pawn);
             _pieces.Remove(_promotionPosition);
 
-            // Create the new piece
             GameObject newPiece = null;
             switch (pieceType.ToLower())
             {
@@ -418,39 +552,33 @@ public class ChessGameManager : MonoBehaviour
 
             if (newPiece != null)
             {
-                // Initialize the new piece
                 ChessPiece chessPiece = newPiece.GetComponent<ChessPiece>();
                 chessPiece.Initialize(isWhite, this);
 
-                // Position it
                 newPiece.transform.position = GetTileCenter(_promotionPosition) + Constants.offset;
 
-                // Update the pieces dictionary
                 _pieces[_promotionPosition] = newPiece;
             }
         }
 
         _isWaitingForPromotion = false;
-        // Need to end the turn here since MovePiece doesn't do it for promotion cases
         EndTurn();
     }
 
     private IEnumerator AnimatePieceMovement(GameObject pieceObject, Vector3 startPos, Vector3 endPos)
     {
-        float duration = 0.3f; // Animation duration in seconds
+        float duration = 0.3f;
         float elapsedTime = 0f;
-        float maxHeight = 1.5f; // Maximum height during the arc
+        float maxHeight = 1.5f;
 
         while (elapsedTime < duration)
         {
             elapsedTime += Time.deltaTime;
             float t = elapsedTime / duration;
         
-            // Create arc movement by manipulating the Y component
-            float normalizedHeight = Mathf.Sin(t * Mathf.PI); // Sin function for smooth up-down
+            float normalizedHeight = Mathf.Sin(t * Mathf.PI);
             float yOffset = normalizedHeight * maxHeight;
         
-            // Interpolate position with arc
             Vector3 currentPos = Vector3.Lerp(startPos, endPos, t);
             currentPos.y = currentPos.y + yOffset;
         
@@ -458,7 +586,6 @@ public class ChessGameManager : MonoBehaviour
             yield return null;
         }
     
-        // Ensure final position is exact
         pieceObject.transform.position = endPos;
     }
     
@@ -466,7 +593,6 @@ public class ChessGameManager : MonoBehaviour
     {
         bool isCapture = _pieces.ContainsKey(targetPos);
 
-        // Get current position and store for animation
         Vector2Int oldPos = GetPiecePosition(piece);
         Vector3 startPos = piece.transform.position;
         Vector3 endPos = GetTileCenter(targetPos) + Constants.offset;
@@ -481,7 +607,6 @@ public class ChessGameManager : MonoBehaviour
         moveHistory.Add(moveNotation);
         LogMoveHistory(); 
         
-        // Reset En Passant for all pawns of current player
         foreach (var item in _pieces.Values)
         {
             ChessPiece chessPiece = item.GetComponent<ChessPiece>();
@@ -492,20 +617,16 @@ public class ChessGameManager : MonoBehaviour
             }
         }
 
-        // Remove the piece from its old position in the dictionary
         _pieces.Remove(oldPos);
 
-        // Handle castling
         if (piece is King && Mathf.Abs(targetPos.y - oldPos.y) == 2)
         {
-            // Kingside castling
             if (targetPos.y > oldPos.y)
             {
                 Vector2Int rookOldPos = new Vector2Int(oldPos.x, 7);
                 Vector2Int rookNewPos = new Vector2Int(oldPos.x, 5);
                 MoveRookForCastling(rookOldPos, rookNewPos);
             }
-            // Queenside castling
             else
             {
                 Vector2Int rookOldPos = new Vector2Int(oldPos.x, 0);
@@ -514,7 +635,6 @@ public class ChessGameManager : MonoBehaviour
             }
         }
 
-        // Handle En Passant capture
         if (piece is Pawn && Mathf.Abs(targetPos.y - oldPos.y) == 1 && _pieces.TryGetValue(targetPos, out var targetPiece) == false)
         {
             Vector2Int enPassantPos = new Vector2Int(oldPos.x, targetPos.y);
@@ -525,26 +645,20 @@ public class ChessGameManager : MonoBehaviour
             }
         }
 
-        // Capture the target piece if it exists
         if (_pieces.TryGetValue(targetPos, out var targetPiece1))
         {
             Destroy(targetPiece1);
             _pieces.Remove(targetPos);
         }
 
-        // Add the piece to its new position in the dictionary
         _pieces[targetPos] = piece.gameObject;
     
-        // Instead of directly moving the piece, start the animation
         PlayMoveSound();
     
-        // Start the animation coroutine
         StartCoroutine(AnimatePieceMovement(piece.gameObject, startPos, endPos));
     
-        // Update the logical position of the piece
         piece.hasMoved = true;
 
-        // Set En Passant target square
         if (piece is Pawn)
         {
             var pieceScript = piece as Pawn;
@@ -556,7 +670,6 @@ public class ChessGameManager : MonoBehaviour
             }
         }
 
-        // Update move counter
         if (piece is Pawn || isCapture)
         {
             movesSinceCapturePawn = 0;
@@ -566,10 +679,8 @@ public class ChessGameManager : MonoBehaviour
             movesSinceCapturePawn++;
         }
 
-        // Add the new board state to history
         boardStateHistory.Add(GenerateBoardStateKey());
 
-        // Check for pawn promotion
         if (piece is Pawn && ((piece.isWhite && targetPos.x == 7) || (!piece.isWhite && targetPos.x == 0)))
         {
             _promotionPosition = targetPos;
@@ -578,39 +689,30 @@ public class ChessGameManager : MonoBehaviour
         }
         else
         {
-            // End turn normally if no promotion
             EndTurn();
         }
     }
 
     private string GetMoveNotation(Vector2Int from, Vector2Int to)
     {
-        // Get the moving piece
         ChessPiece piece = _pieces[from].GetComponent<ChessPiece>();
     
-        // Check for castling
         if (piece is King && Mathf.Abs(to.y - from.y) == 2)
         {
-            // Kingside castling
             if (to.y > from.y)
                 return "O-O";
-            // Queenside castling
             else
                 return "O-O-O";
         }
     
-        // Get piece character
         string pieceChar = GetPieceNotationChar(piece);
     
-        // Convert board coordinates to chess notation
         string fromSquare = PositionToChessNotation(from);
         string toSquare = PositionToChessNotation(to);
     
-        // Check for capture
         bool isCapture = _pieces.ContainsKey(to);
         string captureSymbol = isCapture ? "x" : "";
     
-        // Build notation
         return $"{pieceChar}{fromSquare}{captureSymbol}{toSquare}";
     }
 
@@ -634,7 +736,6 @@ public class ChessGameManager : MonoBehaviour
     
     private void RecordPromotion(string pieceType)
     {
-        // Append the promotion piece to the last move
         if (moveHistory.Count > 0)
         {
             string lastMove = moveHistory[moveHistory.Count - 1];
@@ -651,7 +752,7 @@ public class ChessGameManager : MonoBehaviour
             case "rook": return 'r';
             case "bishop": return 'b';
             case "knight": return 'n';
-            default: return 'q'; // Default to queen
+            default: return 'q';
         }
     }
     
@@ -686,7 +787,6 @@ public class ChessGameManager : MonoBehaviour
     }
 
     public bool IsTileEmpty(Vector2Int tilePos) =>
-        //verify if the tile has any piece child without using "ContainsKey" method
         _pieces.All(p => p.Key != tilePos);
 
     public bool IsEnemyPiece(PieceDetails pieceDetails)
@@ -847,6 +947,10 @@ public class ChessGameManager : MonoBehaviour
         }
     }
 
+    public void RestartGame()
+    {
+        SceneManager.LoadScene("GameModeSelection");
+    }
     private void EndTurn()
     {
         isWhiteTurn = !isWhiteTurn;
@@ -855,23 +959,33 @@ public class ChessGameManager : MonoBehaviour
         {
             if (IsCheckmate(isWhiteTurn))
             {
-                Debug.Log(!isWhiteTurn ? "White wins by checkmate!" : "Black wins by checkmate!");
+                string winner = isWhiteTurn ? "Black" : "White";
+                ShowPopup($"{winner} wins by checkmate!");
                 EndGame();
+                return;
             }
-            else
-            {
-                Debug.Log(!isWhiteTurn ? "Black is in check!" : "White is in check!");
-            }
+            PlayCheckSound();
+            Debug.Log($"{(isWhiteTurn ? "White" : "Black")} is in check.");
         }
         else if (IsStalemate(isWhiteTurn))
         {
-            Debug.Log("The game is a draw by stalemate!");
+            string reason = "by stalemate";
+        
+            if (IsThreefoldRepetition())
+                reason = "by threefold repetition";
+            else if (IsFiftyMoveRule())
+                reason = "by fifty-move rule";
+            else if (HasInsufficientMaterial())
+                reason = "by insufficient material";
+            
+            ShowPopup($"Game drawn {reason}");
             EndGame();
+            return;
         }
 
         selectedPiece = null;
         ClearHighlights();
-        
+
         if (playAgainstComputer && ((isWhiteTurn && !computerPlaysBlack) || (!isWhiteTurn && computerPlaysBlack)))
         {
             StartCoroutine(MakeComputerMove());
@@ -880,16 +994,13 @@ public class ChessGameManager : MonoBehaviour
     
     private IEnumerator MakeComputerMove()
     {
-        // Wait a short delay before making the computer move
         yield return new WaitForSeconds(0.5f);
 
-        // Convert move history list to space-separated string format for the DLL
         string moves = string.Join(" ", moveHistory);
         Debug.Log($"Sending moves to engine: {moves}");
 
         bool computerIsWhite = !computerPlaysBlack;
     
-        // Request best move from engine
         IntPtr bestMovePtr = GetBestMove(moves, computerSearchDepth, computerIsWhite);
         string bestMove = Marshal.PtrToStringAnsi(bestMovePtr);
 
@@ -908,7 +1019,6 @@ public class ChessGameManager : MonoBehaviour
             cleanMove = bestMove.Substring(1);
         }
     
-        // Parse the move coordinates
         if (cleanMove.Length < 4) yield break;
     
         char fromFileChar = bestMove[0];
@@ -916,17 +1026,14 @@ public class ChessGameManager : MonoBehaviour
         char toFileChar = bestMove[2];
         char toRankChar = bestMove[3];
 
-        // Convert to board coordinates
         int fromFile = fromFileChar - 'a';
         int fromRank = fromRankChar - '1';
         int toFile = toFileChar - 'a';
         int toRank = toRankChar - '1';
 
-        // Convert to Vector2Int
         Vector2Int fromPos = new Vector2Int(fromRank, fromFile);
         Vector2Int toPos = new Vector2Int(toRank, toFile);
 
-        // Highlight the from position first
         foreach (var tile in _tiles.Values)
         {
             ChessTile tileScript = tile.GetComponent<ChessTile>();
@@ -938,10 +1045,8 @@ public class ChessGameManager : MonoBehaviour
             }
         }
 
-        // Wait a moment to show the from square
         yield return new WaitForSeconds(0.3f);
     
-        // Highlight the to position
         foreach (var tile in _tiles.Values)
         {
             ChessTile tileScript = tile.GetComponent<ChessTile>();
@@ -953,13 +1058,10 @@ public class ChessGameManager : MonoBehaviour
             }
         }
     
-        // Wait a moment for visual clarity
         yield return new WaitForSeconds(0.2f);
 
-        // Execute the move like a player would
         ExecuteUciMove(bestMove);
     
-        // Clear highlights after the move
         yield return new WaitForSeconds(0.2f);
         ClearHighlights();
     }
@@ -973,7 +1075,6 @@ public class ChessGameManager : MonoBehaviour
     {
         Debug.Log($"Executing UCI move: {uciMove}");
 
-        // Remove any piece identifier if present (like N, B, R, Q, K)
         string cleanMove = uciMove;
         if (uciMove.Length > 0 && char.IsUpper(uciMove[0]) &&
             "NBRQK".Contains(uciMove[0]))
@@ -981,39 +1082,32 @@ public class ChessGameManager : MonoBehaviour
             cleanMove = uciMove.Substring(1);
         }
 
-        // Remove capture symbol 'x' if present
         cleanMove = cleanMove.Replace("x", "");
 
-        // Make sure we have at least 4 characters for a move
         if (cleanMove.Length < 4)
         {
             Debug.LogError($"Invalid move format: {uciMove}");
             return;
         }
 
-        // Parse the move coordinates
         char fromFileChar = cleanMove[0];
         char fromRankChar = cleanMove[1];
         char toFileChar = cleanMove[2];
         char toRankChar = cleanMove[3];
 
-        // Convert to board coordinates
         int fromFile = fromFileChar - 'a';
         int fromRank = fromRankChar - '1';
         int toFile = toFileChar - 'a';
         int toRank = toRankChar - '1';
 
-        // Convert to Vector2Int
         Vector2Int fromPos = new Vector2Int(fromRank, fromFile);
         Vector2Int toPos = new Vector2Int(toRank, toFile);
 
-        // Find the piece at the from position
         if (_pieces.TryGetValue(fromPos, out GameObject pieceObj))
         {
             ChessPiece piece = pieceObj.GetComponent<ChessPiece>();
             if (piece != null)
             {
-                // Store promotion type if present
                 string promotionType = null;
                 if (cleanMove.Length > 4)
                 {
@@ -1021,10 +1115,8 @@ public class ChessGameManager : MonoBehaviour
                     promotionType = GetPromotionTypeFromChar(promotionChar);
                 }
 
-                // Execute the move
                 MovePiece(piece, toPos);
 
-                // Handle promotion separately if needed
                 if (promotionType != null && _isWaitingForPromotion)
                 {
                     PromotePawn(promotionType);
@@ -1045,13 +1137,23 @@ public class ChessGameManager : MonoBehaviour
             case 'r': return "Rook";
             case 'b': return "Bishop";
             case 'n': return "Knight";
-            default: return "Queen"; // Default to queen
+            default: return "Queen";
         }
     }
     
     private void ShowPopup(string message)
     {
+        PlayGameOverSound();
         
+        SetBoardInteraction(false);
+    
+        gameOverMessage.text = message;
+    
+        gameOverPanel.SetActive(true);
+    
+        gameOverPanel.transform.SetAsLastSibling();
+    
+        Debug.Log("Game Over: " + message);
     }
 
     private bool IsKingInCheck(bool isWhite)
@@ -1089,21 +1191,18 @@ public class ChessGameManager : MonoBehaviour
     }
     private bool IsCheckmate(bool isWhite)
     {
-        // 1. Check if the king has any valid moves
         Vector2Int kingPos = FindKingPosition(isWhite);
         ChessPiece king = GetPieceAtPosition(kingPos);
     
-        // Check if king can move safely
         List<Vector2Int> kingMoves = king.GetValidMoves(kingPos);
         foreach (Vector2Int move in kingMoves)
         {
             if (!IsTileAttacked(move, isWhite))
             {
-                return false; // King can escape check
+                return false;
             }
         }
     
-        // 2. Identify attacking pieces and their attack paths
         List<ChessPiece> attackingPieces = new List<ChessPiece>();
         Dictionary<ChessPiece, List<Vector2Int>> attackPaths = new Dictionary<ChessPiece, List<Vector2Int>>();
     
@@ -1118,7 +1217,6 @@ public class ChessGameManager : MonoBehaviour
                 {
                     attackingPieces.Add(chessPiece);
                 
-                    // For sliding pieces, calculate the attack path
                     List<Vector2Int> path = new List<Vector2Int>();
                     if (chessPiece is Queen || chessPiece is Rook || chessPiece is Bishop)
                     {
@@ -1142,19 +1240,17 @@ public class ChessGameManager : MonoBehaviour
             }
         }
     
-        // If more than one piece is attacking, the check can only be escaped by moving the king
         if (attackingPieces.Count > 1)
         {
-            return true; // Checkmate (king can't move and multiple attackers)
+            return true;
         }
     
-        // 3. Check if any friendly piece can block the attack or capture the attacker
         if (attackingPieces.Count == 1)
         {
             ChessPiece attacker = attackingPieces[0];
             Vector2Int attackerPos = GetPiecePosition(attacker);
             List<Vector2Int> blockingSquares = attackPaths[attacker];
-            blockingSquares.Add(attackerPos); // Add attacker position to consider captures
+            blockingSquares.Add(attackerPos);
         
             foreach (var piece in _pieces.Values)
             {
@@ -1168,10 +1264,9 @@ public class ChessGameManager : MonoBehaviour
                     {
                         if (blockingSquares.Contains(move))
                         {
-                            // Check if this blocking move would be safe for the king
                             if (IsMoveSafeForKing(defender, defenderPos, move))
                             {
-                                return false; // Check can be blocked or attacker captured
+                                return false;
                             }
                         }
                     }
@@ -1179,7 +1274,7 @@ public class ChessGameManager : MonoBehaviour
             }
         }
     
-        return true; // Checkmate (king can't move and check can't be blocked/captured)
+        return true;
     }
 
     private List<Vector2Int> GetAttackPath(ChessPiece attackingPiece, Vector2Int attackingPos, Vector2Int kingPos)
@@ -1206,7 +1301,6 @@ public class ChessGameManager : MonoBehaviour
     
     private bool HasInsufficientMaterial()
     {
-        // Count pieces by type
         int whitePieces = 0, blackPieces = 0;
         int whiteBishops = 0, blackBishops = 0;
         int whiteKnights = 0, blackKnights = 0;
@@ -1244,20 +1338,15 @@ public class ChessGameManager : MonoBehaviour
             }
         }
 
-        // King vs King
         if (whitePieces == 1 && blackPieces == 1)
             return true;
 
-        // King and Bishop/Knight vs King
         if ((whitePieces == 2 && (whiteBishops == 1 || whiteKnights == 1) && blackPieces == 1) ||
             (blackPieces == 2 && (blackBishops == 1 || blackKnights == 1) && whitePieces == 1))
             return true;
 
-        // King and Bishop vs King and Bishop (same color bishops)
         if (whitePieces == 2 && blackPieces == 2 && whiteBishops == 1 && blackBishops == 1)
         {
-            // Check if bishops are on same colored squares
-            // In chess, squares have the same color if (x+y)%2 gives the same result
             bool whiteBishopOnDarkSquare = (whiteBishopPositions[0].x + whiteBishopPositions[0].y) % 2 == 0;
             bool blackBishopOnDarkSquare = (blackBishopPositions[0].x + blackBishopPositions[0].y) % 2 == 0;
         
@@ -1265,7 +1354,6 @@ public class ChessGameManager : MonoBehaviour
                 return true;
         }
 
-        // King and two Knights vs King
         if ((whitePieces == 3 && whiteKnights == 2 && !whiteHasOtherPieces && blackPieces == 1) ||
             (blackPieces == 3 && blackKnights == 2 && !blackHasOtherPieces && whitePieces == 1))
             return true;
@@ -1277,7 +1365,6 @@ public class ChessGameManager : MonoBehaviour
     {
         StringBuilder key = new StringBuilder();
     
-        // 1. Board position - use Forsyth-Edwards Notation (FEN) style
         for (int x = 0; x < 8; x++)
         {
             int emptySquares = 0;
@@ -1286,7 +1373,6 @@ public class ChessGameManager : MonoBehaviour
                 Vector2Int pos = new Vector2Int(x, y);
                 if (_pieces.TryGetValue(pos, out GameObject pieceObject))
                 {
-                    // If there were empty squares before this piece, append the count
                     if (emptySquares > 0)
                     {
                         key.Append(emptySquares);
@@ -1303,48 +1389,40 @@ public class ChessGameManager : MonoBehaviour
                 }
             }
         
-            // Append any remaining empty squares at the end of the rank
             if (emptySquares > 0)
             {
                 key.Append(emptySquares);
             }
         
-            // Add rank separator (except for the last rank)
             if (x < 7)
             {
                 key.Append('/');
             }
         }
     
-        // 2. Active player
         key.Append(' ').Append(isWhiteTurn ? 'w' : 'b');
     
-        // 3. Castling availability
         key.Append(' ');
         bool castlingAvailable = false;
     
-        // Check white kingside castling
         if (CanCastle(true, true))
         {
             key.Append('K');
             castlingAvailable = true;
         }
     
-        // Check white queenside castling
         if (CanCastle(true, false))
         {
             key.Append('Q');
             castlingAvailable = true;
         }
     
-        // Check black kingside castling
         if (CanCastle(false, true))
         {
             key.Append('k');
             castlingAvailable = true;
         }
     
-        // Check black queenside castling
         if (CanCastle(false, false))
         {
             key.Append('q');
@@ -1356,7 +1434,6 @@ public class ChessGameManager : MonoBehaviour
             key.Append('-');
         }
     
-        // 4. En passant target square
         key.Append(' ');
         bool enPassantAvailable = false;
     
@@ -1366,11 +1443,11 @@ public class ChessGameManager : MonoBehaviour
             if (pawn != null && pawn.EnPassantable)
             {
                 Vector2Int pawnPos = GetPiecePosition(pawn);
-                int epRow = pawn.isWhite ? 2 : 5; // Row where the en passant capture would occur
+                int epRow = pawn.isWhite ? 2 : 5;
                 char file = (char)('a' + pawnPos.y);
-                key.Append(file).Append(epRow + 1); // +1 because chess notation is 1-based
+                key.Append(file).Append(epRow + 1);
                 enPassantAvailable = true;
-                break; // Only one pawn can be en passantable at a time
+                break;
             }
         }
     
@@ -1379,13 +1456,11 @@ public class ChessGameManager : MonoBehaviour
             key.Append('-');
         }
     
-        // 5. Halfmove clock for 50-move rule
         key.Append(' ').Append(movesSinceCapturePawn);
     
         return key.ToString();
     }
 
-    // Helper method to get character representation of a piece
     private char GetPieceChar(ChessPiece piece)
     {
         if (piece is Pawn) return 'p';
@@ -1397,10 +1472,8 @@ public class ChessGameManager : MonoBehaviour
         return '?';
     }
 
-    // Helper method to check if castling is available
     private bool CanCastle(bool isWhite, bool kingSide)
     {
-        // Find the king
         King king = null;
         Vector2Int kingPos = new Vector2Int(-1, -1);
     
@@ -1417,10 +1490,9 @@ public class ChessGameManager : MonoBehaviour
     
         if (king == null || kingPos.x != (isWhite ? 0 : 7) || kingPos.y != 4)
         {
-            return false; // King has moved or isn't in the starting position
+            return false;
         }
     
-        // Check for rook
         Vector2Int rookPos = new Vector2Int(isWhite ? 0 : 7, kingSide ? 7 : 0);
         if (_pieces.TryGetValue(rookPos, out GameObject rookObj))
         {
@@ -1441,41 +1513,36 @@ public class ChessGameManager : MonoBehaviour
                 count++;
         }
     
-        return count >= 2; // Current position + 2 previous occurrences
+        return count >= 2;
     }
     
     private bool IsFiftyMoveRule()
     {
-        return movesSinceCapturePawn >= 100; // 50 moves by each player
+        return movesSinceCapturePawn >= 100;
     }
     
     private bool IsStalemate(bool isWhite)
     {
-        // First check if king is in check - if so, it's not stalemate
         if (IsKingInCheck(isWhite))
         {
             return false;
         }
 
-        // Check for threefold repetition
         if (IsThreefoldRepetition())
         {
             return true;
         }
 
-        // Check for fifty-move rule
         if (IsFiftyMoveRule())
         {
             return true;
         }
 
-        // Check for insufficient material
         if (HasInsufficientMaterial())
         {
             return true;
         }
 
-        // Check if any piece has a legal move
         foreach (var piece in _pieces.Values)
         {
             ChessPiece chessPiece = piece.GetComponent<ChessPiece>();
@@ -1486,16 +1553,14 @@ public class ChessGameManager : MonoBehaviour
 
                 foreach (Vector2Int move in validMoves)
                 {
-                    // Check if this move would be safe for the king
                     if (IsMoveSafeForKing(chessPiece, currentPos, move))
                     {
-                        return false; // Found a legal move, not stalemate
+                        return false;
                     }
                 }
             }
         }
 
-        // No legal moves and not in check = stalemate
         return true;
     }
     private void EndGame()
@@ -1508,7 +1573,6 @@ public class ChessGameManager : MonoBehaviour
     {
         Vector2Int clickedPiecePos = GetPiecePosition(piece);
 
-        // Case 1: Player is selecting their own piece to move
         if (selectedPiece == null)
         {
             if (piece.isWhite == isWhiteTurn)
@@ -1517,10 +1581,8 @@ public class ChessGameManager : MonoBehaviour
                 HighlightMoves(selectedPiece.GetValidMoves(clickedPiecePos));
             }
         }
-        // Case 2: Player is clicking on an enemy piece to capture it
         else if (piece.isWhite != isWhiteTurn)
         {
-            // Check if the clicked enemy piece is on a highlighted tile (valid move)
             bool isHighlighted = false;
             foreach (var tile in _tiles.Values)
             {
@@ -1542,7 +1604,6 @@ public class ChessGameManager : MonoBehaviour
                 MovePiece(selectedPiece, clickedPiecePos);
             }
         }
-        // Case 3: Player is selecting a different piece of their color
         else if (piece.isWhite == isWhiteTurn)
         {
             ClearHighlights();
@@ -1568,91 +1629,83 @@ public class ChessGameManager : MonoBehaviour
         return false;
     }
 
-private bool IsAttackingTile(ChessPiece piece, Vector2Int piecePos, Vector2Int targetPos, Vector2Int? ignorePos = null)
-{
-    // King attacks (1 square in any direction)
-    if (piecePos == targetPos)
+    private bool IsAttackingTile(ChessPiece piece, Vector2Int piecePos, Vector2Int targetPos, Vector2Int? ignorePos = null)
+    {
+        if (piecePos == targetPos)
+            return false;
+        if (piece is King)
+        {
+            int dx = Mathf.Abs(targetPos.x - piecePos.x);
+            int dy = Mathf.Abs(targetPos.y - piecePos.y);
+            return dx <= 1 && dy <= 1 && (dx > 0 || dy > 0);
+        }
+
+        if (piece is Knight)
+        {
+            Vector2Int[] offsets =
+            {
+                new Vector2Int(2, 1), new Vector2Int(2, -1),
+                new Vector2Int(-2, 1), new Vector2Int(-2, -1),
+                new Vector2Int(1, 2), new Vector2Int(1, -2),
+                new Vector2Int(-1, 2), new Vector2Int(-1, -2)
+            };
+            foreach (Vector2Int offset in offsets)
+            {
+                if (piecePos + offset == targetPos)
+                    return true;
+            }
+            return false;
+        }
+
+        if (piece is Pawn)
+        {
+            int direction = piece.isWhite ? 1 : -1;
+            Vector2Int forwardLeft = new Vector2Int(direction, -1);
+            Vector2Int forwardRight = new Vector2Int(direction, 1);
+            return piecePos + forwardLeft == targetPos || piecePos + forwardRight == targetPos;
+        }
+
+        int deltaX = targetPos.x - piecePos.x;
+        int deltaY = targetPos.y - piecePos.y;
+
+        bool onSameRankOrFile = deltaX == 0 || deltaY == 0;
+        if (onSameRankOrFile && (piece is Rook || piece is Queen))
+        {
+            Vector2Int direction = new Vector2Int(
+                deltaX == 0 ? 0 : deltaX / Mathf.Abs(deltaX),
+                deltaY == 0 ? 0 : deltaY / Mathf.Abs(deltaY)
+            );
+
+            Vector2Int checkPos = piecePos + direction;
+            while (checkPos != targetPos)
+            {
+                if (checkPos != ignorePos && _pieces.ContainsKey(checkPos))
+                    return false;
+                checkPos += direction;
+            }
+            return true;
+        }
+
+        bool onSameDiagonal = Mathf.Abs(deltaX) == Mathf.Abs(deltaY);
+        if (onSameDiagonal && (piece is Bishop || piece is Queen))
+        {
+            Vector2Int direction = new Vector2Int(
+                deltaX / Mathf.Abs(deltaX),
+                deltaY / Mathf.Abs(deltaY)
+            );
+
+            Vector2Int checkPos = piecePos + direction;
+            while (checkPos != targetPos)
+            {
+                if (checkPos != ignorePos && _pieces.ContainsKey(checkPos))
+                    return false;
+                checkPos += direction;
+            }
+            return true;
+        }
+
         return false;
-    if (piece is King)
-    {
-        int dx = Mathf.Abs(targetPos.x - piecePos.x);
-        int dy = Mathf.Abs(targetPos.y - piecePos.y);
-        return dx <= 1 && dy <= 1 && (dx > 0 || dy > 0);
     }
-
-    // Knight attacks
-    if (piece is Knight)
-    {
-        Vector2Int[] offsets =
-        {
-            new Vector2Int(2, 1), new Vector2Int(2, -1),
-            new Vector2Int(-2, 1), new Vector2Int(-2, -1),
-            new Vector2Int(1, 2), new Vector2Int(1, -2),
-            new Vector2Int(-1, 2), new Vector2Int(-1, -2)
-        };
-        foreach (Vector2Int offset in offsets)
-        {
-            if (piecePos + offset == targetPos)
-                return true;
-        }
-        return false;
-    }
-
-    // Pawn attacks
-    if (piece is Pawn)
-    {
-        int direction = piece.isWhite ? 1 : -1;
-        Vector2Int forwardLeft = new Vector2Int(direction, -1);
-        Vector2Int forwardRight = new Vector2Int(direction, 1);
-        return piecePos + forwardLeft == targetPos || piecePos + forwardRight == targetPos;
-    }
-
-    // Sliding pieces (Queen, Rook, Bishop)
-    int deltaX = targetPos.x - piecePos.x;
-    int deltaY = targetPos.y - piecePos.y;
-
-    // Check if target is on same rank/file (Rook, Queen)
-    bool onSameRankOrFile = deltaX == 0 || deltaY == 0;
-    if (onSameRankOrFile && (piece is Rook || piece is Queen))
-    {
-        Vector2Int direction = new Vector2Int(
-            deltaX == 0 ? 0 : deltaX / Mathf.Abs(deltaX),
-            deltaY == 0 ? 0 : deltaY / Mathf.Abs(deltaY)
-        );
-
-        // Check if path is clear, ignoring the specified position
-        Vector2Int checkPos = piecePos + direction;
-        while (checkPos != targetPos)
-        {
-            if (checkPos != ignorePos && _pieces.ContainsKey(checkPos))
-                return false; // Blocked
-            checkPos += direction;
-        }
-        return true; // Clear path to target
-    }
-
-    // Check if target is on same diagonal (Bishop, Queen)
-    bool onSameDiagonal = Mathf.Abs(deltaX) == Mathf.Abs(deltaY);
-    if (onSameDiagonal && (piece is Bishop || piece is Queen))
-    {
-        Vector2Int direction = new Vector2Int(
-            deltaX / Mathf.Abs(deltaX),
-            deltaY / Mathf.Abs(deltaY)
-        );
-
-        // Check if path is clear, ignoring the specified position
-        Vector2Int checkPos = piecePos + direction;
-        while (checkPos != targetPos)
-        {
-            if (checkPos != ignorePos && _pieces.ContainsKey(checkPos))
-                return false; // Blocked
-            checkPos += direction;
-        }
-        return true; // Clear path to target
-    }
-
-    return false;
-}
     private bool IsMoveSafeForKing(ChessPiece piece, Vector2Int from, Vector2Int to)
     {
         Vector2Int kingPos = piece is King ? to : FindKingPosition(piece.isWhite);

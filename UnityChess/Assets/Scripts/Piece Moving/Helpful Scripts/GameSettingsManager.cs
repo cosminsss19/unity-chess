@@ -5,17 +5,14 @@ namespace Piece_Moving.Helpful_Scripts
 {
     public class GameSettingsManager : MonoBehaviour
     {
-        // Singleton pattern to persist between scenes
         public static GameSettingsManager Instance;
     
-        // Game settings
         public bool PlayAgainstComputer { get; private set; }
         public bool ComputerPlaysWhite { get; private set; }
 
-        public ChessPersonality ComputerPersonality { get; private set; } = ChessPersonality.STANDARD; // Default personality
+        public ChessPersonality ComputerPersonality { get; private set; } = ChessPersonality.STANDARD;
         private void Awake()
         {
-            // Singleton implementation
             if (Instance == null)
             {
                 Instance = this;
@@ -44,7 +41,7 @@ namespace Piece_Moving.Helpful_Scripts
     
         public void StartGame()
         {
-            SceneManager.LoadScene("TwoPlayers"); // Load your main chess scene
+            SceneManager.LoadScene("TwoPlayers");
         }
     }
 }

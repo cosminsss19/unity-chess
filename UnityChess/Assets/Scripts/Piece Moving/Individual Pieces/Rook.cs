@@ -4,7 +4,6 @@ using UnityEngine;
 
 public class Rook : ChessPiece
 {
-    //Implement Rook movement.
     public override List<Vector2Int> GetValidMoves(Vector2Int currentPos)
     {
         return GetLineMoves(currentPos, new[] {
